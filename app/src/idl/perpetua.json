@@ -1,0 +1,736 @@
+{
+  "address": "GTaf7icvPHNzDMfd1gt8eN5p3fKERRwPaenfWKjGhaGP",
+  "metadata": {
+    "name": "perpetua",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "close_position",
+      "docs": [
+        "Tutup posisi: hitung PnL vs harga acuan, bayar payout dari kolam."
+      ],
+      "discriminator": [
+        123,
+        134,
+        81,
+        0,
+        49,
+        68,
+        98,
+        98
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.oracle_feed",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              },
+              {
+                "kind": "account",
+                "path": "trader"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "create_market",
+      "docs": [
+        "Nyalakan pasar leverage baru untuk sebuah feed — bebas-izin."
+      ],
+      "discriminator": [
+        103,
+        226,
+        97,
+        235,
+        200,
+        188,
+        251,
+        254
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "oracle_feed"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "oracle_feed",
+          "type": "pubkey"
+        },
+        {
+          "name": "initial_price",
+          "type": "u64"
+        },
+        {
+          "name": "initial_liquidity",
+          "type": "u64"
+        }
+      ]
+    },
+    {
+      "name": "liquidate_position",
+      "docs": [
+        "Likuidasi permissionless: tutup paksa posisi yang margin-nya jebol,",
+        "liquidator dapat bounty dari kolam."
+      ],
+      "discriminator": [
+        187,
+        74,
+        229,
+        149,
+        102,
+        81,
+        221,
+        68
+      ],
+      "accounts": [
+        {
+          "name": "liquidator",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.oracle_feed",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "docs": [
+            "Owner posisi — nerima rent balik pas akun ditutup."
+          ],
+          "writable": true
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "open_position",
+      "docs": [
+        "Buka posisi long/short dengan pengungkit."
+      ],
+      "discriminator": [
+        135,
+        128,
+        47,
+        77,
+        15,
+        152,
+        240,
+        49
+      ],
+      "accounts": [
+        {
+          "name": "trader",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.oracle_feed",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              },
+              {
+                "kind": "account",
+                "path": "trader"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "collateral",
+          "type": "u64"
+        },
+        {
+          "name": "leverage",
+          "type": "u64"
+        },
+        {
+          "name": "is_long",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "set_mark_price",
+      "docs": [
+        "PLACEHOLDER H-1/H-2: set harga acuan manual (authority). Dipakai buat test",
+        "deterministik & fallback demo. H-2+: harga asli via update_price_from_pyth."
+      ],
+      "discriminator": [
+        117,
+        147,
+        117,
+        130,
+        141,
+        224,
+        46,
+        243
+      ],
+      "accounts": [
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.oracle_feed",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "market"
+          ]
+        }
+      ],
+      "args": [
+        {
+          "name": "price",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Market",
+      "discriminator": [
+        219,
+        190,
+        213,
+        55,
+        0,
+        227,
+        198,
+        154
+      ]
+    },
+    {
+      "name": "Position",
+      "discriminator": [
+        170,
+        188,
+        143,
+        228,
+        122,
+        64,
+        247,
+        208
+      ]
+    },
+    {
+      "name": "Vault",
+      "discriminator": [
+        211,
+        8,
+        232,
+        43,
+        2,
+        152,
+        117,
+        119
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "Unauthorized",
+      "msg": "Only the market authority may perform this action"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidLeverage",
+      "msg": "Leverage out of allowed range (1..=MAX_LEVERAGE)"
+    },
+    {
+      "code": 6002,
+      "name": "ZeroCollateral",
+      "msg": "Collateral must be greater than zero"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidPrice",
+      "msg": "Invalid market price (zero)"
+    },
+    {
+      "code": 6004,
+      "name": "InsufficientLiquidity",
+      "msg": "Liquidity pool has insufficient funds to cover the payout"
+    },
+    {
+      "code": 6005,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6006,
+      "name": "PositionHealthy",
+      "msg": "Position is still healthy — not eligible for liquidation"
+    }
+  ],
+  "types": [
+    {
+      "name": "Market",
+      "docs": [
+        "Satu pasar leverage di atas satu feed harga. Dibuat bebas-izin: siapa pun",
+        "bisa \"menyalakan\" pasar untuk sebuah feed yang belum ada."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Pembuat pasar (penyetor likuiditas awal)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "oracle_feed",
+            "docs": [
+              "Feed harga (Pyth) yang jadi acuan. H-1: disimpan, belum dibaca."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "mark_price",
+            "docs": [
+              "Harga acuan saat ini, 6 desimal. H-1/H-2: di-set via price ingress",
+              "(set_mark_price manual / update_price_from_pyth)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_long",
+            "docs": [
+              "Total notional posisi long & short (buat skew/likuiditas nanti)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_short",
+            "type": "u64"
+          },
+          {
+            "name": "vault_bump",
+            "docs": [
+              "Bump PDA vault (kolam lamports lawan-dagang)."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Position",
+      "docs": [
+        "Posisi satu trader di satu pasar (satu posisi per (owner, market) di v1)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "is_long",
+            "type": "bool"
+          },
+          {
+            "name": "size",
+            "docs": [
+              "Notional = collateral * leverage (dalam lamports)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "collateral",
+            "docs": [
+              "Jaminan terkunci (lamports)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "entry_price",
+            "docs": [
+              "Harga masuk, 6 desimal."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Vault",
+      "docs": [
+        "Kolam lamports lawan-dagang (vAMM sederhana v1). Akun milik-program yang",
+        "menyimpan SOL; payout & bounty ditarik manual dari sini."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ],
+  "constants": [
+    {
+      "name": "BPS_DENOMINATOR",
+      "docs": [
+        "Penyebut basis-point (10_000 = 100%)."
+      ],
+      "type": "u64",
+      "value": "10000"
+    },
+    {
+      "name": "LIQUIDATION_BOUNTY_BPS",
+      "docs": [
+        "Bounty buat liquidator, dari notional. 100 = 1%."
+      ],
+      "type": "u64",
+      "value": "100"
+    },
+    {
+      "name": "MAINTENANCE_MARGIN_BPS",
+      "docs": [
+        "Maintenance margin: kalau ekuitas ≤ mmr% dari notional, posisi bisa dilikuidasi. 500 = 5%."
+      ],
+      "type": "u64",
+      "value": "500"
+    },
+    {
+      "name": "MARKET_SEED",
+      "type": "bytes",
+      "value": "[109, 97, 114, 107, 101, 116]"
+    },
+    {
+      "name": "MAX_LEVERAGE",
+      "docs": [
+        "Batas pengungkit demo v1 — dijaga sempit biar fokus (M-04)."
+      ],
+      "type": "u64",
+      "value": "20"
+    },
+    {
+      "name": "POSITION_SEED",
+      "type": "bytes",
+      "value": "[112, 111, 115, 105, 116, 105, 111, 110]"
+    },
+    {
+      "name": "PRICE_ONE",
+      "docs": [
+        "Harga & rasio pakai 6 desimal tetap (1_000_000 = 1.0)."
+      ],
+      "type": "u64",
+      "value": "1000000"
+    },
+    {
+      "name": "VAULT_SEED",
+      "type": "bytes",
+      "value": "[118, 97, 117, 108, 116]"
+    }
+  ]
+}
