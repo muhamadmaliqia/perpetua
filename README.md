@@ -20,7 +20,8 @@ permissionless and instant:
 - **Anyone** calls `create_market(feed)` and a leveraged market exists ~10s later.
 - The counterparty is an **automated liquidity pool** (a simple vAMM) — no orderbook,
   no matching engine, no market makers to court.
-- Price + settlement ride on **Pyth**, so PnL ticks in real time and settles on-chain.
+- Each market's oracle identity is a **Pyth** feed; PnL updates live from the on-chain
+  mark, and every action settles on-chain.
 
 Perps on predictions already exists. *Permissionless, instant, any-feed market
 **creation*** is the wedge.
@@ -38,7 +39,7 @@ Perps on predictions already exists. *Permissionless, instant, any-feed market
             └──────┬───────┘                            ├──────────────────────┤
                    │  SOL in/out                        │ Vault PDA (liquidity)│
                    ▼                                     └──────────────────────┘
-             Pyth price ──(keeper: Hermes → set_mark_price)──▶ mark_price
+            set_mark_price ──(Pyth keeper in prod · pump/crash in demo)──▶ mark_price
 ```
 
 **On-chain accounts (PDAs)**
@@ -55,7 +56,7 @@ Perps on predictions already exists. *Permissionless, instant, any-feed market
 | `open_position` | Long/short with leverage; collateral locked into the vault |
 | `close_position` | Settle PnL vs mark price; payout = `max(0, equity)` |
 | `liquidate_position` | **Permissionless** force-close when equity ≤ 5% of notional; liquidator earns a 1% bounty |
-| `set_mark_price` | Price ingress — fed by a Pyth keeper (Hermes → on-chain) |
+| `set_mark_price` | Price ingress — a Pyth keeper in production; driven by demo pump/crash controls here |
 
 Collateral is **native SOL** (no SPL setup) for a fast, frictionless demo.
 
@@ -65,10 +66,10 @@ Collateral is **native SOL** (no SPL setup) for a fast, frictionless demo.
 
 | Piece | State |
 |---|---|
-| On-chain program (5 instructions) | ✅ complete — `cargo test` **2 passing** (full trade loop + liquidation) |
+| On-chain program (5 instructions) | ✅ complete — `cargo test` **4 passing** (trade loop, +25% close, liquidation, self-liquidation) |
 | Deploy path | ✅ verified on a validator (~1.53 SOL, 219 KB program) |
 | Client/frontend wiring | ✅ verified end-to-end via smoke test against a live program |
-| Frontend (React, dark-terminal UI) | ✅ builds clean; wired to all 5 instructions, live PnL, Pyth keeper |
+| Frontend (React, dark-terminal UI) | ✅ builds clean; wired to all 5 instructions, live PnL from the on-chain mark |
 | Devnet deployment | ⏳ pending (awaiting devnet SOL) |
 
 ---
@@ -80,7 +81,7 @@ Collateral is **native SOL** (no SPL setup) for a fast, frictionless demo.
 ```bash
 # 1. Program: build + test
 anchor build
-cargo test -p perpetua              # 2 passing: trade loop + liquidation
+cargo test -p perpetua              # 4 passing: trade loop, +25% close, liquidation, self-liquidation
 
 # 2. Deploy (devnet)
 solana airdrop 2                    # fund the wallet (or use faucet.solana.com)
@@ -103,15 +104,16 @@ bash demo-local.sh                  # starts a validator, deploys, funds — lea
 cd app && npm run dev
 ```
 
-Open **http://localhost:5173?rpc=http://localhost:8899**, add `http://localhost:8899` as a
-custom RPC in your wallet, then hit **airdrop 2◎** in the app. Full loop, zero faucet.
+Open **http://localhost:5173?rpc=http://localhost:8899** — on localnet the app spins up an
+auto-funded burner wallet, so there's **no wallet popup and no faucet**. Just hit
+**Ignite market** and trade.
 
 ---
 
 ## Demo flow (the 60 seconds that matter)
 
 1. Pick a Pyth feed (SOL / BTC / ETH) → **⚡ Ignite market** — live in ~10s.
-2. Open a **5× long**. PnL starts **ticking live** with the real Pyth price.
+2. Open a **5× long**. PnL **ticks live** from the on-chain mark.
 3. Price drops → margin breaches → **anyone** can liquidate it (and earn the bounty).
 4. Close a winner → **payout on-chain**, straight to the wallet.
 
