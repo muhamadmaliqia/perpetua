@@ -16,6 +16,10 @@ const PRICE_100: u64 = 100_000_000; // $100.000000
 const PRICE_110: u64 = 110_000_000; // $110.000000 (+10%)
 const PRICE_82: u64 = 82_000_000; //  $82.000000  (-18%)
 const SOL: u64 = 1_000_000_000;
+// Kedalaman pasar buat skew-premium fill (B1). Raksasa = premium≈0 (angka regresi lama kejaga);
+// demo = price-impact keliatan.
+const SKEW_BIG: u64 = 100_000_000 * SOL;
+const SKEW_DEMO: u64 = 25 * SOL;
 
 fn setup() -> (LiteSVM, Pubkey) {
     let program_id = perpetua::id();
@@ -66,13 +70,14 @@ fn load_position(svm: &LiteSVM, key: &Pubkey) -> perpetua::state::Position {
     perpetua::state::Position::try_deserialize(&mut data).unwrap()
 }
 
-fn ix_create_market(program_id: Pubkey, user: &Pubkey, feed: Pubkey, market: Pubkey, vault: Pubkey, price: u64, liq: u64) -> Instruction {
+fn ix_create_market(program_id: Pubkey, user: &Pubkey, feed: Pubkey, market: Pubkey, vault: Pubkey, price: u64, liq: u64, skew_scale: u64) -> Instruction {
     Instruction::new_with_bytes(
         program_id,
         &perpetua::instruction::CreateMarket {
             oracle_feed: feed,
             initial_price: price,
             initial_liquidity: liq,
+            skew_scale,
         }
         .data(),
         perpetua::accounts::CreateMarket {
@@ -128,7 +133,7 @@ fn test_perpetua_open_and_close_long_win() {
     svm.airdrop(&user.pubkey(), 50 * SOL).unwrap();
 
     // 1) NYALAKAN PASAR (bebas-izin) — likuiditas awal 10 SOL, harga awal $100.
-    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_100, 10 * SOL), &user);
+    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_100, 10 * SOL, SKEW_BIG), &user);
     let m = load_market(&svm, &market);
     assert_eq!(m.authority, user.pubkey());
     assert_eq!(m.oracle_feed, feed);
@@ -188,7 +193,7 @@ fn test_perpetua_liquidation_when_margin_breached() {
     svm.airdrop(&liquidator.pubkey(), 1 * SOL).unwrap(); // buat bayar fee
 
     // Setup: pasar $100 + 10 SOL likuiditas, buka LONG 5x jaminan 2 SOL (size 10 SOL).
-    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_100, 10 * SOL), &user);
+    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_100, 10 * SOL, SKEW_BIG), &user);
     send(&mut svm, ix_open(program_id, &user.pubkey(), market, vault, position, 2 * SOL, 5, true), &user);
 
     // Sebelum jatuh: posisi SEHAT -> likuidasi harus DITOLAK.
@@ -237,10 +242,9 @@ fn test_perpetua_liquidation_when_margin_breached() {
     assert_eq!(load_market(&svm, &market).total_long, 0);
 }
 
-/// AUDIT 4 Okt — replikasi ANGKA DEFAULT DEMO (DEMO.md §2 Babak 2):
-/// seed 0.5 SOL likuiditas, buka LONG 0.5 SOL 5x, pump +25%, TUTUP.
-/// Payout = 0.5 + 2.5*25% = 1.125 SOL, tapi kolam cuma 0.5+0.5 = 1.0 SOL.
-/// Kalau ini panik InsufficientLiquidity = tombol TUTUP bakal "Gagal" di demo.
+/// Demo default (DEMO.md Babak 2) PASCA-SKEW: seed 2 SOL, LONG 0.5 SOL 5x (size 2.5),
+/// skew_scale 25 SOL -> entry skew $157.50, pump +25% ke $187.50, TUTUP.
+/// PnL = 2.5*(187.5-157.5)/157.5 = ~0.476 SOL -> payout ~0.976 SOL. Vault 2.5 SOL = solvent.
 #[test]
 fn test_demo_defaults_pump_then_close() {
     let (mut svm, program_id) = setup();
@@ -255,9 +259,12 @@ fn test_demo_defaults_pump_then_close() {
     let seed = 2 * SOL; // likuiditas awal (fix 4 Okt: 0.5 SOL kurang buat payout +125%)
 
     // IGNITE: seed 2 SOL (persis App.tsx createMarket pasca-fix).
-    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_150, seed), &user);
+    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_150, seed, SKEW_DEMO), &user);
     // OPEN LONG 0.5 SOL 5x -> size 2.5 SOL.
     send(&mut svm, ix_open(program_id, &user.pubkey(), market, vault, position, half, 5, true), &user);
+    // Skew fill: LONG 2.5 SOL ke buku kosong, skew_scale 25 SOL -> premium rata2 5%
+    // -> entry = 150 * 1.05 = $157.50 (bukan $150 mentah). INI inti skew: size gerakin harga.
+    assert_eq!(load_position(&svm, &position).entry_price, 157_500_000);
     // PUMP +25%.
     send(&mut svm, ix_set_price(program_id, &user.pubkey(), market, PRICE_187_5), &user);
     // CLOSE -> payout = 0.5 + 2.5*25% = 1.125 SOL. Harus SUKSES + masuk ke wallet trader.
@@ -270,10 +277,11 @@ fn test_demo_defaults_pump_then_close() {
     );
     send(&mut svm, ix, &user);
     let after = svm.get_account(&user.pubkey()).unwrap().lamports;
-    // payout ~1.125 SOL (dikurangi fee kecil, ditambah rent refund posisi) -> naik > 1 SOL.
+    // CLOSE: mark $187.50 vs entry skew $157.50 -> PnL = 2.5*(187.5-157.5)/157.5 = ~0.476 SOL,
+    // payout = 0.5 + 0.476 = ~0.976 SOL (+ rent refund posisi, - fee). Solvent (vault 2.5 SOL).
     assert!(
-        after > before + 1_000_000_000,
-        "payout +125% nggak masuk: before={} after={}",
+        after > before + 950_000_000 && after < before + 1_010_000_000,
+        "payout skew nggak sesuai: before={} after={}",
         before, after
     );
     assert_eq!(load_market(&svm, &market).total_long, 0);
@@ -295,7 +303,7 @@ fn test_demo_self_liquidation() {
     let half = SOL / 2;
     let seed = 2 * SOL;
 
-    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_150, seed), &user);
+    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_150, seed, SKEW_DEMO), &user);
     send(&mut svm, ix_open(program_id, &user.pubkey(), market, vault, position, half, 5, true), &user);
     send(&mut svm, ix_set_price(program_id, &user.pubkey(), market, PRICE_CRASH), &user);
 
@@ -318,4 +326,30 @@ fn test_demo_self_liquidation() {
     let closed = svm.get_account(&position);
     assert!(closed.is_none() || closed.unwrap().lamports == 0, "posisi belum tertutup");
     assert_eq!(load_market(&svm, &market).total_long, 0);
+}
+
+/// B1 skew-premium: UKURAN posisi gerakin harga isi. LONG ke buku kosong -> fill DI ATAS
+/// oracle; SHORT ke buku kosong -> fill DI BAWAH oracle. Simetris. (Nol price-impact = MATI.)
+#[test]
+fn test_skew_premium_long_up_short_down() {
+    let (mut svm, program_id) = setup();
+    let user = Keypair::new();
+    svm.airdrop(&user.pubkey(), 50 * SOL).unwrap();
+    const PRICE_150: u64 = 150_000_000;
+    let depth = 25 * SOL; // skew_scale
+    let col = SOL / 2; // 0.5 SOL -> size 2.5 SOL @ 5x
+
+    // LONG ke buku kosong: skew +2.5 SOL, premium rata2 +5% -> entry $157.50.
+    let feed_l = Pubkey::new_unique();
+    let (m_l, v_l, p_l) = market_pdas(&program_id, &feed_l, &user.pubkey());
+    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed_l, m_l, v_l, PRICE_150, 2 * SOL, depth), &user);
+    send(&mut svm, ix_open(program_id, &user.pubkey(), m_l, v_l, p_l, col, 5, true), &user);
+    assert_eq!(load_position(&svm, &p_l).entry_price, 157_500_000, "LONG mestinya isi DI ATAS oracle");
+
+    // SHORT ke buku kosong (feed beda): skew -2.5 SOL, premium rata2 -5% -> entry $142.50.
+    let feed_s = Pubkey::new_unique();
+    let (m_s, v_s, p_s) = market_pdas(&program_id, &feed_s, &user.pubkey());
+    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed_s, m_s, v_s, PRICE_150, 2 * SOL, depth), &user);
+    send(&mut svm, ix_open(program_id, &user.pubkey(), m_s, v_s, p_s, col, 5, false), &user);
+    assert_eq!(load_position(&svm, &p_s).entry_price, 142_500_000, "SHORT mestinya isi DI BAWAH oracle");
 }

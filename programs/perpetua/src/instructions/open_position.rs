@@ -50,7 +50,28 @@ pub fn handle_open_position(
     let size = collateral
         .checked_mul(leverage)
         .ok_or(PerpetuaError::MathOverflow)?;
-    let entry_price = ctx.accounts.market.mark_price;
+
+    // Skew-premium fill: harga isi = oracle * (1 + rata-rata premium sebelum&sesudah),
+    // premium = skew / skew_scale, skew = total_long - total_short (bertanda). UKURAN posisi
+    // trader yang GERAKIN harga isi — nggak ada yang ngetik harga. (Nol price-impact mati di sini.)
+    let oracle = ctx.accounts.market.mark_price as i128;
+    let skew_scale = ctx.accounts.market.skew_scale as i128;
+    let skew_before =
+        ctx.accounts.market.total_long as i128 - ctx.accounts.market.total_short as i128;
+    let signed_size = if is_long { size as i128 } else { -(size as i128) };
+    let skew_after = skew_before
+        .checked_add(signed_size)
+        .ok_or(PerpetuaError::MathOverflow)?;
+    let one = PRICE_ONE as i128;
+    let prem_before = skew_before.checked_mul(one).ok_or(PerpetuaError::MathOverflow)? / skew_scale;
+    let prem_after = skew_after.checked_mul(one).ok_or(PerpetuaError::MathOverflow)? / skew_scale;
+    let avg_prem = (prem_before + prem_after) / 2;
+    let fill = oracle
+        .checked_mul(one.checked_add(avg_prem).ok_or(PerpetuaError::MathOverflow)?)
+        .ok_or(PerpetuaError::MathOverflow)?
+        / one;
+    require!(fill > 0, PerpetuaError::InvalidPrice);
+    let entry_price = fill as u64;
     let market_key = ctx.accounts.market.key();
 
     // Kunci jaminan ke kolam lawan-dagang.

@@ -5,6 +5,8 @@ import idl from './idl/perpetua.json'
 export const PROGRAM_ID = new PublicKey('GTaf7icvPHNzDMfd1gt8eN5p3fKERRwPaenfWKjGhaGP')
 export const PRICE_ONE = 1_000_000 // harga 6 desimal
 export const LAMPORTS = 1_000_000_000
+// Kedalaman skew (virtual AMM) default demo: size 2.5 SOL -> premium ~5% (harga gerak karena ukuran).
+export const SKEW_SCALE = 25 * LAMPORTS
 
 // Feed kurasi. `pythId` = Pyth price-feed id (32 byte hex) -> dipakai jadi oracle_feed on-chain
 // (feed = PublicKey dari byte-nya). Identitas oracle tiap pasar = feed Pyth ini.

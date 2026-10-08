@@ -21,12 +21,14 @@ pub mod perpetua {
         oracle_feed: Pubkey,
         initial_price: u64,
         initial_liquidity: u64,
+        skew_scale: u64,
     ) -> Result<()> {
         crate::instructions::create_market::handle_create_market(
             ctx,
             oracle_feed,
             initial_price,
             initial_liquidity,
+            skew_scale,
         )
     }
 

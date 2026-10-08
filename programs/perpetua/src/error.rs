@@ -16,4 +16,6 @@ pub enum PerpetuaError {
     MathOverflow,
     #[msg("Position is still healthy — not eligible for liquidation")]
     PositionHealthy,
+    #[msg("Skew scale (market depth) must be greater than zero")]
+    InvalidSkewScale,
 }
