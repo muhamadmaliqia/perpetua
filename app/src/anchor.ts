@@ -10,7 +10,11 @@ export const LAMPORTS = 1_000_000_000
 // (feed = PublicKey dari byte-nya). Identitas oracle tiap pasar = feed Pyth ini.
 // `fallback` = harga awal pasar (USD). (Pyth public Hermes digembok API-key sejak 26 Agu 2026, jadi
 // demo nggak fetch harga live; mark digerakin lewat set_mark_price / tombol pump-crash.)
+// Feed lintas kelas aset — metal (emas) + indeks saham + crypto — nunjukin "pasar leverage buat
+// ANGKA APA PUN": permissionless creation x feed non-crypto (yg launcher SPL nggak nyampe). id = Pyth ASLI.
 export const FEEDS = [
+  { symbol: 'XAU/USD', pythId: '765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2', fallback: 2650 },
+  { symbol: 'US500', pythId: 'e266cf0bf9a358bb19c4269f59b3d2e6258ecda5b0707e758f00c087f4baa3e9', fallback: 6000 },
   { symbol: 'SOL/USD', pythId: 'ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d', fallback: 150 },
   { symbol: 'BTC/USD', pythId: 'e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43', fallback: 95000 },
   { symbol: 'ETH/USD', pythId: 'ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace', fallback: 3500 },
