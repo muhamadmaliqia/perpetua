@@ -12,9 +12,13 @@ pub struct Market {
     /// Harga acuan saat ini, 6 desimal. H-1/H-2: di-set via price ingress
     /// (set_mark_price manual / update_price_from_pyth).
     pub mark_price: u64,
-    /// Total notional posisi long & short (buat skew/likuiditas nanti).
+    /// Total notional posisi long & short (open interest per sisi).
     pub total_long: u64,
     pub total_short: u64,
+    /// Kedalaman pasar (virtual AMM): makin besar -> makin kecil price-impact per
+    /// unit skew. Fill = oracle * (1 + skew/skew_scale), skew = total_long - total_short.
+    /// Diset pembuat pasar (permissionless depth).
+    pub skew_scale: u64,
     /// Bump PDA vault (kolam lamports lawan-dagang).
     pub vault_bump: u8,
     pub bump: u8,

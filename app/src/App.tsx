@@ -3,7 +3,7 @@ import { useConnection, useAnchorWallet, useWallet } from '@solana/wallet-adapte
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { SystemProgram } from '@solana/web3.js'
 import {
-  BN, FEEDS, LAMPORTS, PRICE_ONE,
+  BN, FEEDS, LAMPORTS, PRICE_ONE, SKEW_SCALE,
   feedPubkey, getProgram, marketPda, vaultPda, positionPda,
   pick, getBurnerKeypair, makeBurnerWallet,
 } from './anchor'
@@ -174,7 +174,7 @@ export default function App() {
       // Pool must cover a winning 5x close (+125% on collateral). 0.5 SOL was too thin → close-after-pump
       // hit InsufficientLiquidity (audit 4 Oct); 2 SOL covers the scripted demo with margin.
       const s = await (program.methods as any)
-        .createMarket(feedKey, new BN(p6), new BN(2 * LAMPORTS))
+        .createMarket(feedKey, new BN(p6), new BN(2 * LAMPORTS), new BN(SKEW_SCALE))
         .accountsPartial({
           authority: publicKey,
           market: marketKey,

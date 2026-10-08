@@ -36,8 +36,10 @@ pub fn handle_create_market(
     oracle_feed: Pubkey,
     initial_price: u64,
     initial_liquidity: u64,
+    skew_scale: u64,
 ) -> Result<()> {
     require!(initial_price > 0, PerpetuaError::InvalidPrice);
+    require!(skew_scale > 0, PerpetuaError::InvalidSkewScale);
 
     let vault_key = ctx.accounts.vault.key();
 
@@ -51,6 +53,7 @@ pub fn handle_create_market(
     market.mark_price = initial_price;
     market.total_long = 0;
     market.total_short = 0;
+    market.skew_scale = skew_scale;
     market.vault_bump = ctx.bumps.vault;
     market.bump = ctx.bumps.market;
 
