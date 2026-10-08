@@ -39,12 +39,21 @@ pub struct LiquidatePosition<'info> {
 }
 
 pub fn handle_liquidate_position(ctx: Context<LiquidatePosition>) -> Result<()> {
+    // Akru funding sampai sekarang sebelum likuidasi.
+    let now = Clock::get()?.unix_timestamp;
+    ctx.accounts.market.accrue_funding(now);
+
     let mark = ctx.accounts.market.mark_price;
     require!(mark > 0, PerpetuaError::InvalidPrice);
 
     let is_long = ctx.accounts.position.is_long;
     let size = ctx.accounts.position.size;
-    let equity = ctx.accounts.position.equity(mark);
+    let funding = ctx
+        .accounts
+        .position
+        .funding_owed(ctx.accounts.market.cumulative_funding);
+    // Funding ikut makan ekuitas: posisi yg numpuk funding jadi makin gampang dilikuidasi.
+    let equity = ctx.accounts.position.equity(mark) - funding;
 
     // Maintenance margin = mmr% dari notional. Sehat kalau ekuitas > maintenance.
     let maintenance = (size as u128)

@@ -1,7 +1,7 @@
 use {
     anchor_lang::{
         prelude::Pubkey,
-        solana_program::{instruction::Instruction, system_program},
+        solana_program::{clock::Clock, instruction::Instruction, system_program},
         AccountDeserialize, InstructionData, ToAccountMetas,
     },
     litesvm::LiteSVM,
@@ -352,4 +352,41 @@ fn test_skew_premium_long_up_short_down() {
     send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed_s, m_s, v_s, PRICE_150, 2 * SOL, depth), &user);
     send(&mut svm, ix_open(program_id, &user.pubkey(), m_s, v_s, p_s, col, 5, false), &user);
     assert_eq!(load_position(&svm, &p_s).entry_price, 142_500_000, "SHORT mestinya isi DI BAWAH oracle");
+}
+
+/// B2 funding velocity: pasar LONG-HEAVY -> index funding naik -> LONG BAYAR funding.
+/// PnL di-nol-in (mark = entry skew) biar efek funding keisolasi. Jam on-chain dimajuin 1 jam.
+#[test]
+fn test_funding_long_heavy_long_pays() {
+    let (mut svm, program_id) = setup();
+    let user = Keypair::new();
+    let feed = Pubkey::new_unique();
+    let (market, vault, position) = market_pdas(&program_id, &feed, &user.pubkey());
+    svm.airdrop(&user.pubkey(), 50 * SOL).unwrap();
+    const PRICE_150: u64 = 150_000_000;
+    const ENTRY_SKEW: u64 = 157_500_000; // fill LONG 2.5 SOL @ depth 25 SOL
+
+    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_150, 2 * SOL, SKEW_DEMO), &user);
+    send(&mut svm, ix_open(program_id, &user.pubkey(), market, vault, position, SOL / 2, 5, true), &user);
+    // Nol-in PnL: mark = entry skew ($157.50) -> ekuitas = jaminan, sisanya murni funding.
+    send(&mut svm, ix_set_price(program_id, &user.pubkey(), market, ENTRY_SKEW), &user);
+
+    // Majuin jam on-chain +1 jam -> funding akru (skew long-heavy -> long BAYAR).
+    let mut clock: Clock = svm.get_sysvar();
+    clock.unix_timestamp += 3600;
+    svm.set_sysvar(&clock);
+
+    let before = svm.get_account(&user.pubkey()).unwrap().lamports;
+    let ix = Instruction::new_with_bytes(
+        program_id,
+        &perpetua::instruction::ClosePosition {}.data(),
+        perpetua::accounts::ClosePosition { trader: user.pubkey(), market, vault, position }.to_account_metas(None),
+    );
+    send(&mut svm, ix, &user);
+    let after = svm.get_account(&user.pubkey()).unwrap().lamports;
+    // PnL=0 tapi long di pasar long-heavy BAYAR funding -> payout < jaminan 0.5 SOL.
+    assert!(after < before + 500_000_000, "long mestinya BAYAR funding: before={} after={}", before, after);
+    assert!(after > before + 400_000_000, "funding kebanyakan/salah tanda: before={} after={}", before, after);
+    // Index funding positif di pasar long-heavy.
+    assert!(load_market(&svm, &market).cumulative_funding > 0, "cumulative_funding mestinya > 0");
 }

@@ -47,6 +47,10 @@ pub fn handle_open_position(
     );
     require!(ctx.accounts.market.mark_price > 0, PerpetuaError::InvalidPrice);
 
+    // Akru funding sampai sekarang SEBELUM skew & OI berubah (SIP-279).
+    let now = Clock::get()?.unix_timestamp;
+    ctx.accounts.market.accrue_funding(now);
+
     let size = collateral
         .checked_mul(leverage)
         .ok_or(PerpetuaError::MathOverflow)?;
@@ -72,6 +76,7 @@ pub fn handle_open_position(
         / one;
     require!(fill > 0, PerpetuaError::InvalidPrice);
     let entry_price = fill as u64;
+    let entry_funding = ctx.accounts.market.cumulative_funding;
     let market_key = ctx.accounts.market.key();
 
     // Kunci jaminan ke kolam lawan-dagang.
@@ -89,6 +94,7 @@ pub fn handle_open_position(
     position.size = size;
     position.collateral = collateral;
     position.entry_price = entry_price;
+    position.entry_funding = entry_funding;
     position.bump = ctx.bumps.position;
 
     let market = &mut ctx.accounts.market;
