@@ -54,6 +54,9 @@ pub fn handle_create_market(
     market.total_long = 0;
     market.total_short = 0;
     market.skew_scale = skew_scale;
+    market.cumulative_funding = 0;
+    market.funding_rate = 0;
+    market.last_funding_ts = Clock::get()?.unix_timestamp;
     market.vault_bump = ctx.bumps.vault;
     market.bump = ctx.bumps.market;
 

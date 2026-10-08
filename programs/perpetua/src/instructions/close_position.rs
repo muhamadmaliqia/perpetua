@@ -33,13 +33,22 @@ pub struct ClosePosition<'info> {
 }
 
 pub fn handle_close_position(ctx: Context<ClosePosition>) -> Result<()> {
+    // Akru funding sampai sekarang sebelum nutup.
+    let now = Clock::get()?.unix_timestamp;
+    ctx.accounts.market.accrue_funding(now);
+
     let mark = ctx.accounts.market.mark_price;
     require!(mark > 0, PerpetuaError::InvalidPrice);
 
     let is_long = ctx.accounts.position.is_long;
     let position_size = ctx.accounts.position.size;
     let pnl = ctx.accounts.position.unrealized_pnl(mark);
-    let equity = ctx.accounts.position.equity(mark);
+    let funding = ctx
+        .accounts
+        .position
+        .funding_owed(ctx.accounts.market.cumulative_funding);
+    // Ekuitas setelah funding: long bayar funding pas pasar long-heavy (kurangi payout).
+    let equity = ctx.accounts.position.equity(mark) - funding;
 
     // Payout = ekuitas kalau positif; kalau nggak, 0 (rugi max = seluruh jaminan).
     let payout: u64 = if equity > 0 { equity as u64 } else { 0 };

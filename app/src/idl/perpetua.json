@@ -612,6 +612,23 @@
             "type": "u64"
           },
           {
+            "name": "cumulative_funding",
+            "docs": [
+              "Funding velocity (SIP-279): funding_rate geser sebanding skew; index akumulasi",
+              "tiap interaksi. cumulative_funding = index funding (6-dec fraksi), funding_rate =",
+              "6-dec/detik, last_funding_ts = detik terakhir di-akru (jam on-chain)."
+            ],
+            "type": "i128"
+          },
+          {
+            "name": "funding_rate",
+            "type": "i128"
+          },
+          {
+            "name": "last_funding_ts",
+            "type": "i64"
+          },
+          {
             "name": "vault_bump",
             "docs": [
               "Bump PDA vault (kolam lamports lawan-dagang)."
@@ -665,6 +682,13 @@
               "Harga masuk, 6 desimal."
             ],
             "type": "u64"
+          },
+          {
+            "name": "entry_funding",
+            "docs": [
+              "Snapshot cumulative_funding pas posisi dibuka (buat settle funding di close)."
+            ],
+            "type": "i128"
           },
           {
             "name": "bump",
@@ -723,6 +747,15 @@
       "name": "MARKET_SEED",
       "type": "bytes",
       "value": "[109, 97, 114, 107, 101, 116]"
+    },
+    {
+      "name": "MAX_FUNDING_VELOCITY",
+      "docs": [
+        "Funding velocity maksimum (FUNDING_SCALE per detik^2) saat skew penuh (|prop_skew|=1).",
+        "Makin timpang long/short -> funding_rate makin ngebut (SIP-279). Ditune buat demo."
+      ],
+      "type": "i64",
+      "value": "15"
     },
     {
       "name": "MAX_LEVERAGE",

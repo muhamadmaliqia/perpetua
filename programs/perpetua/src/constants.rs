@@ -28,3 +28,11 @@ pub const MAINTENANCE_MARGIN_BPS: u64 = 500;
 /// Bounty buat liquidator, dari notional. 100 = 1%.
 #[constant]
 pub const LIQUIDATION_BOUNTY_BPS: u64 = 100;
+
+/// Skala internal funding (resolusi index). 1e9 = 1.0.
+pub const FUNDING_SCALE: i128 = 1_000_000_000;
+
+/// Funding velocity maksimum (FUNDING_SCALE per detik^2) saat skew penuh (|prop_skew|=1).
+/// Makin timpang long/short -> funding_rate makin ngebut (SIP-279). Ditune buat demo.
+#[constant]
+pub const MAX_FUNDING_VELOCITY: i64 = 15;
