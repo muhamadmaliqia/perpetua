@@ -18,4 +18,16 @@ pub enum PerpetuaError {
     PositionHealthy,
     #[msg("Skew scale (market depth) must be greater than zero")]
     InvalidSkewScale,
+    #[msg("Invalid market kind (must be 0=perp or 1=prediction)")]
+    InvalidMarketKind,
+    #[msg("Prediction market expiry must be in the future")]
+    InvalidExpiry,
+    #[msg("This action requires a prediction market")]
+    NotPredictionMarket,
+    #[msg("Prediction market has not reached its expiry yet")]
+    NotExpired,
+    #[msg("Prediction market is already resolved")]
+    AlreadyResolved,
+    #[msg("Prediction market is expired — cannot open new positions")]
+    MarketExpired,
 }

@@ -193,6 +193,14 @@
         {
           "name": "skew_scale",
           "type": "u64"
+        },
+        {
+          "name": "market_kind",
+          "type": "u8"
+        },
+        {
+          "name": "expiry_ts",
+          "type": "i64"
         }
       ]
     },
@@ -420,6 +428,57 @@
       ]
     },
     {
+      "name": "resolve_market",
+      "docs": [
+        "F3: resolve prediction market — PERMISSIONLESS, pasca jatuh tempo. Kunci harga feed",
+        "(mark_price, diisi keeper dari Pyth) jadi putusan. Nggak ada komite/manusia."
+      ],
+      "discriminator": [
+        155,
+        23,
+        80,
+        173,
+        46,
+        74,
+        23,
+        239
+      ],
+      "accounts": [
+        {
+          "name": "resolver",
+          "docs": [
+            "Siapa pun. Cuma signer buat bayar fee; NOL privilege (benar-benar bebas-izin)."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.oracle_feed",
+                "account": "Market"
+              }
+            ]
+          }
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "set_mark_price",
       "docs": [
         "PLACEHOLDER H-1/H-2: set harga acuan manual (authority). Dipakai buat test",
@@ -557,6 +616,36 @@
       "code": 6007,
       "name": "InvalidSkewScale",
       "msg": "Skew scale (market depth) must be greater than zero"
+    },
+    {
+      "code": 6008,
+      "name": "InvalidMarketKind",
+      "msg": "Invalid market kind (must be 0=perp or 1=prediction)"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidExpiry",
+      "msg": "Prediction market expiry must be in the future"
+    },
+    {
+      "code": 6010,
+      "name": "NotPredictionMarket",
+      "msg": "This action requires a prediction market"
+    },
+    {
+      "code": 6011,
+      "name": "NotExpired",
+      "msg": "Prediction market has not reached its expiry yet"
+    },
+    {
+      "code": 6012,
+      "name": "AlreadyResolved",
+      "msg": "Prediction market is already resolved"
+    },
+    {
+      "code": 6013,
+      "name": "MarketExpired",
+      "msg": "Prediction market is expired — cannot open new positions"
     }
   ],
   "types": [
@@ -627,6 +716,35 @@
           {
             "name": "last_funding_ts",
             "type": "i64"
+          },
+          {
+            "name": "market_kind",
+            "docs": [
+              "F3: jenis pasar. 0 = Perp (expiry=0, settle live mark price). 1 = Prediction",
+              "(ber-expiry, self-resolve dari feed pas jatuh tempo). Lihat constants::MARKET_KIND_*."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "expiry_ts",
+            "docs": [
+              "F3: unix detik jatuh tempo prediction market. 0 = perpetual (perp, nggak pernah resolve)."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "resolved",
+            "docs": [
+              "F3: sudah di-resolve? (prediction). Sekali true, settle pakai resolution_price, bukan mark."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "resolution_price",
+            "docs": [
+              "F3: harga feed yang DIKUNCI pas resolve (6-dec). 0 sebelum resolve. Feed-nya hakimnya."
+            ],
+            "type": "u64"
           },
           {
             "name": "vault_bump",
@@ -742,6 +860,23 @@
       ],
       "type": "u64",
       "value": "500"
+    },
+    {
+      "name": "MARKET_KIND_PERP",
+      "docs": [
+        "F3 market_kind: pasar perp klasik (perpetual, expiry=0, settle live mark price)."
+      ],
+      "type": "u8",
+      "value": "0"
+    },
+    {
+      "name": "MARKET_KIND_PREDICTION",
+      "docs": [
+        "F3 market_kind: prediction market = perp ber-expiry yang self-resolve dari feed",
+        "(mark_price, diisi keeper dari Pyth) pas jatuh tempo. Satu primitif, bukan mesin baru."
+      ],
+      "type": "u8",
+      "value": "1"
     },
     {
       "name": "MARKET_SEED",

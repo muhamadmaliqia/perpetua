@@ -22,6 +22,8 @@ pub mod perpetua {
         initial_price: u64,
         initial_liquidity: u64,
         skew_scale: u64,
+        market_kind: u8,
+        expiry_ts: i64,
     ) -> Result<()> {
         crate::instructions::create_market::handle_create_market(
             ctx,
@@ -29,6 +31,8 @@ pub mod perpetua {
             initial_price,
             initial_liquidity,
             skew_scale,
+            market_kind,
+            expiry_ts,
         )
     }
 
@@ -57,5 +61,11 @@ pub mod perpetua {
     /// liquidator dapat bounty dari kolam.
     pub fn liquidate_position(ctx: Context<LiquidatePosition>) -> Result<()> {
         crate::instructions::liquidate_position::handle_liquidate_position(ctx)
+    }
+
+    /// F3: resolve prediction market — PERMISSIONLESS, pasca jatuh tempo. Kunci harga feed
+    /// (mark_price, diisi keeper dari Pyth) jadi putusan. Nggak ada komite/manusia.
+    pub fn resolve_market(ctx: Context<ResolveMarket>) -> Result<()> {
+        crate::instructions::resolve_market::handle_resolve_market(ctx)
     }
 }

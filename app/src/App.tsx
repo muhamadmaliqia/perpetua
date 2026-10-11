@@ -174,7 +174,8 @@ export default function App() {
       // Pool must cover a winning 5x close (+125% on collateral). 0.5 SOL was too thin → close-after-pump
       // hit InsufficientLiquidity (audit 4 Oct); 2 SOL covers the scripted demo with margin.
       const s = await (program.methods as any)
-        .createMarket(feedKey, new BN(p6), new BN(2 * LAMPORTS), new BN(SKEW_SCALE))
+        // F3: market_kind=0 (PERP) + expiry=0 -> golden path demo tetep perp perpetual, NOL berubah.
+        .createMarket(feedKey, new BN(p6), new BN(2 * LAMPORTS), new BN(SKEW_SCALE), 0, new BN(0))
         .accountsPartial({
           authority: publicKey,
           market: marketKey,
