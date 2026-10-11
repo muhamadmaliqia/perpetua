@@ -36,3 +36,12 @@ pub const FUNDING_SCALE: i128 = 1_000_000_000;
 /// Makin timpang long/short -> funding_rate makin ngebut (SIP-279). Ditune buat demo.
 #[constant]
 pub const MAX_FUNDING_VELOCITY: i64 = 15;
+
+/// F3 market_kind: pasar perp klasik (perpetual, expiry=0, settle live mark price).
+#[constant]
+pub const MARKET_KIND_PERP: u8 = 0;
+
+/// F3 market_kind: prediction market = perp ber-expiry yang self-resolve dari feed
+/// (mark_price, diisi keeper dari Pyth) pas jatuh tempo. Satu primitif, bukan mesin baru.
+#[constant]
+pub const MARKET_KIND_PREDICTION: u8 = 1;

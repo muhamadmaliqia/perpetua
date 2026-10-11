@@ -47,8 +47,14 @@ pub fn handle_open_position(
     );
     require!(ctx.accounts.market.mark_price > 0, PerpetuaError::InvalidPrice);
 
-    // Akru funding sampai sekarang SEBELUM skew & OI berubah (SIP-279).
     let now = Clock::get()?.unix_timestamp;
+    // F3: prediction market yg udah resolve / lewat jatuh tempo nggak boleh dibuka posisi baru.
+    if ctx.accounts.market.market_kind == MARKET_KIND_PREDICTION {
+        require!(!ctx.accounts.market.resolved, PerpetuaError::AlreadyResolved);
+        require!(now < ctx.accounts.market.expiry_ts, PerpetuaError::MarketExpired);
+    }
+
+    // Akru funding sampai sekarang SEBELUM skew & OI berubah (SIP-279).
     ctx.accounts.market.accrue_funding(now);
 
     let size = collateral

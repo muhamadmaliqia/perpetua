@@ -40,6 +40,14 @@ fn send(svm: &mut LiteSVM, ix: Instruction, payer: &Keypair) {
     assert!(res.is_ok(), "tx gagal: {:?}", res.err());
 }
 
+/// Kirim tx yang BOLEH gagal; return true kalau sukses. Buat ngetes jalur yang mesti DITOLAK.
+fn try_send(svm: &mut LiteSVM, ix: Instruction, payer: &Keypair) -> bool {
+    let bh = svm.latest_blockhash();
+    let msg = Message::new_with_blockhash(&[ix], Some(&payer.pubkey()), &bh);
+    let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[payer]).unwrap();
+    svm.send_transaction(tx).is_ok()
+}
+
 fn market_pdas(program_id: &Pubkey, feed: &Pubkey, user: &Pubkey) -> (Pubkey, Pubkey, Pubkey) {
     let (market, _) =
         Pubkey::find_program_address(&[perpetua::constants::MARKET_SEED, feed.as_ref()], program_id);
@@ -70,7 +78,13 @@ fn load_position(svm: &LiteSVM, key: &Pubkey) -> perpetua::state::Position {
     perpetua::state::Position::try_deserialize(&mut data).unwrap()
 }
 
+// Perp default (kind=0, expiry=0) — 6 test lama manggil ini, NOL berubah.
 fn ix_create_market(program_id: Pubkey, user: &Pubkey, feed: Pubkey, market: Pubkey, vault: Pubkey, price: u64, liq: u64, skew_scale: u64) -> Instruction {
+    ix_create_market_kind(program_id, user, feed, market, vault, price, liq, skew_scale, perpetua::constants::MARKET_KIND_PERP, 0)
+}
+
+// Umum: perp (kind=0, expiry=0) ATAU prediction (kind=1, expiry>now). F3.
+fn ix_create_market_kind(program_id: Pubkey, user: &Pubkey, feed: Pubkey, market: Pubkey, vault: Pubkey, price: u64, liq: u64, skew_scale: u64, market_kind: u8, expiry_ts: i64) -> Instruction {
     Instruction::new_with_bytes(
         program_id,
         &perpetua::instruction::CreateMarket {
@@ -78,6 +92,8 @@ fn ix_create_market(program_id: Pubkey, user: &Pubkey, feed: Pubkey, market: Pub
             initial_price: price,
             initial_liquidity: liq,
             skew_scale,
+            market_kind,
+            expiry_ts,
         }
         .data(),
         perpetua::accounts::CreateMarket {
@@ -85,6 +101,19 @@ fn ix_create_market(program_id: Pubkey, user: &Pubkey, feed: Pubkey, market: Pub
             market,
             vault,
             system_program: system_program::ID,
+        }
+        .to_account_metas(None),
+    )
+}
+
+// F3: resolve prediction market (permissionless — resolver siapa pun).
+fn ix_resolve(program_id: Pubkey, resolver: &Pubkey, market: Pubkey) -> Instruction {
+    Instruction::new_with_bytes(
+        program_id,
+        &perpetua::instruction::ResolveMarket {}.data(),
+        perpetua::accounts::ResolveMarket {
+            resolver: *resolver,
+            market,
         }
         .to_account_metas(None),
     )
@@ -389,4 +418,92 @@ fn test_funding_long_heavy_long_pays() {
     assert!(after > before + 400_000_000, "funding kebanyakan/salah tanda: before={} after={}", before, after);
     // Index funding positif di pasar long-heavy.
     assert!(load_market(&svm, &market).cumulative_funding > 0, "cumulative_funding mestinya > 0");
+}
+
+/// F3 SELF-RESOLVING PREDICTION MARKET: pasar prediction ber-expiry. Resolve DITOLAK sebelum
+/// jatuh tempo; pas expiry siapa pun (PIHAK KETIGA) boleh resolve -> kunci harga feed; close
+/// settle di harga TERKUNCI meski live mark berubah; resolve kedua ditolak. Inti wedge:
+/// nggak ada manusia/komite yg mutusin — feed-nya (Pyth via keeper) hakimnya.
+#[test]
+fn test_prediction_self_resolve() {
+    let (mut svm, program_id) = setup();
+    let trader = Keypair::new();
+    let resolver = Keypair::new(); // PIHAK KETIGA — bukan authority/owner. Bebas-izin.
+    let feed = Pubkey::new_unique();
+    let (market, vault, position) = market_pdas(&program_id, &feed, &trader.pubkey());
+    svm.airdrop(&trader.pubkey(), 50 * SOL).unwrap();
+    svm.airdrop(&resolver.pubkey(), 1 * SOL).unwrap();
+
+    const PRICE_180: u64 = 180_000_000; // +20% harga feed pas expiry
+    let clock: Clock = svm.get_sysvar();
+    let expiry = clock.unix_timestamp + 3600; // jatuh tempo 1 jam lagi
+
+    // IGNITE prediction market (kind=1, expiry 1 jam): harga $100, likuiditas 20 SOL, depth raksasa.
+    send(&mut svm, ix_create_market_kind(program_id, &trader.pubkey(), feed, market, vault, PRICE_100, 20 * SOL, SKEW_BIG, perpetua::constants::MARKET_KIND_PREDICTION, expiry), &trader);
+    let m = load_market(&svm, &market);
+    assert_eq!(m.market_kind, perpetua::constants::MARKET_KIND_PREDICTION);
+    assert_eq!(m.expiry_ts, expiry);
+    assert!(!m.resolved);
+
+    // BET: LONG 5x jaminan 2 SOL -> size 10 SOL (= taruhan harga NAIK). entry = $100 (depth raksasa).
+    send(&mut svm, ix_open(program_id, &trader.pubkey(), market, vault, position, 2 * SOL, 5, true), &trader);
+    assert_eq!(load_position(&svm, &position).entry_price, PRICE_100);
+
+    // RESOLVE SEBELUM JATUH TEMPO -> HARUS DITOLAK (NotExpired).
+    assert!(!try_send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market), &resolver), "resolve sebelum expiry mestinya DITOLAK");
+
+    // Majuin jam on-chain ke jatuh tempo. Keeper dorong harga feed +20% -> $180.
+    let mut clock2: Clock = svm.get_sysvar();
+    clock2.unix_timestamp = expiry;
+    svm.set_sysvar(&clock2);
+    send(&mut svm, ix_set_price(program_id, &trader.pubkey(), market, PRICE_180), &trader);
+    svm.expire_blockhash(); // biar tx resolve asli nggak byte-identik dgn percobaan gagal di atas
+
+    // RESOLVE oleh PIHAK KETIGA (permissionless) -> kunci resolution_price = $180.
+    send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market), &resolver);
+    let m2 = load_market(&svm, &market);
+    assert!(m2.resolved, "market mestinya resolved");
+    assert_eq!(m2.resolution_price, PRICE_180, "harga feed pas expiry mestinya TERKUNCI");
+
+    // RESOLVE LAGI -> DITOLAK (AlreadyResolved).
+    svm.expire_blockhash();
+    assert!(!try_send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market), &resolver), "resolve kedua mestinya DITOLAK");
+
+    // BUKTI KUNCI: live mark balik turun ke $100, TAPI settle tetap pakai $180 terkunci.
+    send(&mut svm, ix_set_price(program_id, &trader.pubkey(), market, PRICE_100), &trader);
+
+    // CLOSE -> settle di harga RESOLUSI $180 (BUKAN live $100). PnL = 10*(180-100)/100 = 8 SOL,
+    // payout = 2 + 8 = 10 SOL. Vault 20 + 2 jaminan = 22 -> solvent.
+    let before = svm.get_account(&trader.pubkey()).unwrap().lamports;
+    let ix = Instruction::new_with_bytes(
+        program_id,
+        &perpetua::instruction::ClosePosition {}.data(),
+        perpetua::accounts::ClosePosition { trader: trader.pubkey(), market, vault, position }.to_account_metas(None),
+    );
+    send(&mut svm, ix, &trader);
+    let after = svm.get_account(&trader.pubkey()).unwrap().lamports;
+    // payout ~10 SOL (di harga terkunci $180), BUKAN ~2 SOL (kalau salah pakai live $100).
+    assert!(
+        after > before + 9_900_000_000 && after < before + 10_100_000_000,
+        "settle mestinya di harga TERKUNCI $180 (payout ~10 SOL): before={} after={}",
+        before, after
+    );
+    assert_eq!(load_market(&svm, &market).total_long, 0);
+}
+
+/// F3: resolve HANYA buat prediction market. Perp (kind=0) ditolak (NotPredictionMarket).
+#[test]
+fn test_resolve_rejects_perp() {
+    let (mut svm, program_id) = setup();
+    let user = Keypair::new();
+    let resolver = Keypair::new();
+    let feed = Pubkey::new_unique();
+    let (market, vault, _position) = market_pdas(&program_id, &feed, &user.pubkey());
+    svm.airdrop(&user.pubkey(), 50 * SOL).unwrap();
+    svm.airdrop(&resolver.pubkey(), 1 * SOL).unwrap();
+
+    // Pasar PERP biasa (kind=0, expiry=0).
+    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_100, 10 * SOL, SKEW_BIG), &user);
+    // Resolve perp -> DITOLAK (bukan prediction market).
+    assert!(!try_send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market), &resolver), "resolve pada perp mestinya DITOLAK (NotPredictionMarket)");
 }

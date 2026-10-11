@@ -33,11 +33,20 @@ pub struct ClosePosition<'info> {
 }
 
 pub fn handle_close_position(ctx: Context<ClosePosition>) -> Result<()> {
-    // Akru funding sampai sekarang sebelum nutup.
+    // F3: prediction market yg udah resolve settle di HARGA RESOLUSI yg dikunci (bukan live
+    // mark), dan funding-nya udah dibekuin di jatuh tempo -> jangan akru lagi.
     let now = Clock::get()?.unix_timestamp;
-    ctx.accounts.market.accrue_funding(now);
+    let resolved_prediction = ctx.accounts.market.market_kind == MARKET_KIND_PREDICTION
+        && ctx.accounts.market.resolved;
+    if !resolved_prediction {
+        ctx.accounts.market.accrue_funding(now);
+    }
 
-    let mark = ctx.accounts.market.mark_price;
+    let mark = if resolved_prediction {
+        ctx.accounts.market.resolution_price
+    } else {
+        ctx.accounts.market.mark_price
+    };
     require!(mark > 0, PerpetuaError::InvalidPrice);
 
     let is_long = ctx.accounts.position.is_long;

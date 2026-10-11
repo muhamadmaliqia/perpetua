@@ -25,6 +25,15 @@ pub struct Market {
     pub cumulative_funding: i128,
     pub funding_rate: i128,
     pub last_funding_ts: i64,
+    /// F3: jenis pasar. 0 = Perp (expiry=0, settle live mark price). 1 = Prediction
+    /// (ber-expiry, self-resolve dari feed pas jatuh tempo). Lihat constants::MARKET_KIND_*.
+    pub market_kind: u8,
+    /// F3: unix detik jatuh tempo prediction market. 0 = perpetual (perp, nggak pernah resolve).
+    pub expiry_ts: i64,
+    /// F3: sudah di-resolve? (prediction). Sekali true, settle pakai resolution_price, bukan mark.
+    pub resolved: bool,
+    /// F3: harga feed yang DIKUNCI pas resolve (6-dec). 0 sebelum resolve. Feed-nya hakimnya.
+    pub resolution_price: u64,
     /// Bump PDA vault (kolam lamports lawan-dagang).
     pub vault_bump: u8,
     pub bump: u8,

@@ -39,6 +39,14 @@ pub struct LiquidatePosition<'info> {
 }
 
 pub fn handle_liquidate_position(ctx: Context<LiquidatePosition>) -> Result<()> {
+    // F3: pasar prediction yg udah resolve harus settle lewat close (harga resolusi terkunci),
+    // bukan dilikuidasi di live mark. Blokir likuidasi pasca-resolve.
+    require!(
+        !(ctx.accounts.market.market_kind == MARKET_KIND_PREDICTION
+            && ctx.accounts.market.resolved),
+        PerpetuaError::AlreadyResolved
+    );
+
     // Akru funding sampai sekarang sebelum likuidasi.
     let now = Clock::get()?.unix_timestamp;
     ctx.accounts.market.accrue_funding(now);

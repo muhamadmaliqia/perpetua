@@ -37,9 +37,24 @@ pub fn handle_create_market(
     initial_price: u64,
     initial_liquidity: u64,
     skew_scale: u64,
+    market_kind: u8,
+    expiry_ts: i64,
 ) -> Result<()> {
     require!(initial_price > 0, PerpetuaError::InvalidPrice);
     require!(skew_scale > 0, PerpetuaError::InvalidSkewScale);
+    require!(
+        market_kind == MARKET_KIND_PERP || market_kind == MARKET_KIND_PREDICTION,
+        PerpetuaError::InvalidMarketKind
+    );
+
+    let now = Clock::get()?.unix_timestamp;
+    // Perp: expiry dipaksa 0 (perpetual). Prediction: wajib jatuh tempo di masa depan.
+    let expiry = if market_kind == MARKET_KIND_PREDICTION {
+        require!(expiry_ts > now, PerpetuaError::InvalidExpiry);
+        expiry_ts
+    } else {
+        0
+    };
 
     let vault_key = ctx.accounts.vault.key();
 
@@ -56,7 +71,11 @@ pub fn handle_create_market(
     market.skew_scale = skew_scale;
     market.cumulative_funding = 0;
     market.funding_rate = 0;
-    market.last_funding_ts = Clock::get()?.unix_timestamp;
+    market.last_funding_ts = now;
+    market.market_kind = market_kind;
+    market.expiry_ts = expiry;
+    market.resolved = false;
+    market.resolution_price = 0;
     market.vault_bump = ctx.bumps.vault;
     market.bump = ctx.bumps.market;
 
@@ -71,10 +90,12 @@ pub fn handle_create_market(
     }
 
     msg!(
-        "Market ignited: vault={} initial_price={} liquidity={}",
+        "Market ignited: vault={} price={} liq={} kind={} expiry={}",
         vault_key,
         initial_price,
-        initial_liquidity
+        initial_liquidity,
+        market_kind,
+        expiry
     );
     Ok(())
 }
