@@ -31,9 +31,12 @@ const get = (o, a, b) => (o[a] !== undefined ? o[a] : o[b])
 console.log('wallet', kp.publicKey.toBase58(), '| balance', await bal())
 console.log('program', PID.toBase58())
 
-console.log('\n[1] create_market ($100, 0.5 SOL likuiditas)...')
+// skew_scale raksasa = premium skew ~0 -> angka lama kejaga (entry $100). kind 0 = perp, expiry 0.
+const SKEW_BIG = new BN(100_000_000).mul(new BN(LAMPORTS_PER_SOL))
+
+console.log('\n[1] create_market ($100, 0.5 SOL likuiditas, perp)...')
 await program.methods
-  .createMarket(feed, new BN(100_000_000), new BN(0.5 * LAMPORTS_PER_SOL))
+  .createMarket(feed, new BN(100_000_000), new BN(0.5 * LAMPORTS_PER_SOL), SKEW_BIG, 0, new BN(0))
   .accountsPartial({ authority: kp.publicKey, market, vault, systemProgram: SystemProgram.programId })
   .rpc()
 let m = await program.account.market.fetch(market)
