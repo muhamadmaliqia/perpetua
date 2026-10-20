@@ -240,6 +240,13 @@ button { font-family: var(--ui); }
 .demostrip .lbl { font: 400 9px/1 var(--mono); letter-spacing: 0.2em; color: var(--fg-faint); white-space: nowrap; }
 .demostrip .inlinelog { font: 400 10px/1.4 var(--mono); color: var(--fg-faint); margin-left: auto; }
 
+/* F3 prediction: resolution panel (countdown -> awaiting Pyth -> resolved) */
+.resolve { padding: 26px 0; box-shadow: inset 0 -1px 0 var(--line); }
+.resolve .k { font: 400 9px/1 var(--mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-dim); }
+.resolve .v { font: 300 44px/1 var(--ui); letter-spacing: -0.03em; margin-top: 14px; font-variant-numeric: tabular-nums; }
+.resolve .sub { font: 400 11px/1.6 var(--mono); color: var(--fg-dim); margin-top: 12px; max-width: 64ch; }
+.resolve .btn { width: auto; padding: 15px 28px; margin-top: 18px; }
+
 /* ---------- right rail: order ---------- */
 .rail-r { padding: 26px 22px; display: flex; flex-direction: column; }
 .rail-r > .rail-label { display: block; margin-bottom: 16px; }
@@ -248,6 +255,12 @@ button { font-family: var(--ui); }
 .seg button { font: 600 11px/1 var(--mono); letter-spacing: 0.12em; color: var(--fg-dim); background: transparent; border: 0; padding: 12px 0; cursor: pointer; transition: background 0.14s ease, color 0.14s ease; }
 .seg button.long.active { color: #07070c; background: var(--green); }
 .seg button.short.active { color: #07070c; background: var(--red); }
+/* F3: PERP / PREDICTION + duration pickers (ignite box) */
+.seg.kind { margin-top: 12px; }
+.seg.kind.three { grid-template-columns: repeat(3, 1fr); margin-top: 8px; }
+.seg.kind button { padding: 10px 0; font-size: 10px; }
+.seg.kind button.active { color: var(--fg); background: rgba(153, 69, 255, 0.28); }
+.seg.kind button:disabled { cursor: default; }
 
 .field-label { font: 400 9px/1 var(--mono); letter-spacing: 0.2em; color: var(--fg-dim); margin: 22px 0 10px; }
 .field { display: flex; align-items: center; justify-content: space-between; box-shadow: inset 0 -1px 0 var(--line-strong); padding-bottom: 9px; }

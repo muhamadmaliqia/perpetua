@@ -3,8 +3,8 @@ import { useConnection, useAnchorWallet, useWallet } from '@solana/wallet-adapte
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import { SystemProgram } from '@solana/web3.js'
 import {
-  BN, FEEDS, LAMPORTS, PRICE_ONE, SKEW_SCALE,
-  feedPubkey, getProgram, marketPda, vaultPda, positionPda,
+  BN, FEEDS, LAMPORTS, PRICE_ONE, SKEW_SCALE, MARKET_KIND_PERP, MARKET_KIND_PREDICTION,
+  feedPubkey, getProgram, marketPda, vaultPda, positionPda, pythPriceAccount, decodePythPrice,
   pick, getBurnerKeypair, makeBurnerWallet,
 } from './anchor'
 
@@ -26,8 +26,36 @@ const explorer = (sig: string) =>
     ? `https://explorer.solana.com/tx/${sig}?cluster=custom&customUrl=${encodeURIComponent(RPC)}`
     : `https://explorer.solana.com/tx/${sig}?cluster=devnet`
 
-type MarketState = { authority: string; markPrice: number; totalLong: number; totalShort: number } | null
+// prediction countdown / "published 3m ago"
+const fmtDur = (s: number) => {
+  s = Math.max(0, Math.floor(s))
+  if (s >= 3600) return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
+const fmtAgo = (s: number) => (s < 90 ? `${Math.max(0, Math.round(s))}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${(s / 3600).toFixed(1)}h ago`)
+const fmtClock = (unix: number) => new Date(unix * 1000).toLocaleTimeString('en-GB')
+const DURATIONS = [60, 300, 3600]
+
+type MarketState = {
+  authority: string; markPrice: number; totalLong: number; totalShort: number
+  kind: number; expiryTs: number; resolved: boolean; resolutionPrice: number; lastOracleTs: number
+} | null
 type PositionState = { isLong: boolean; size: number; collateral: number; entryPrice: number } | null
+// akun harga Pyth sponsored buat feed ini di cluster sekarang: harga + publish_time, atau 'missing'
+type PythAcct = { price6: number; publishTime: number } | 'missing' | null
+
+// Error resolve -> kalimat jujur buat statusbar (keputusan tetep di kontrak).
+const explainResolve = (e: any, pythAcct: PythAcct, now: number) => {
+  const m = e?.message ?? String(e)
+  if (m.includes('OraclePriceBeforeExpiry'))
+    return pythAcct && pythAcct !== 'missing'
+      ? `Pyth hasn't published a price after expiry yet (last one ${fmtAgo(now - pythAcct.publishTime)}). Sponsored feeds update about hourly.`
+      : "Pyth hasn't published a price after expiry yet."
+  if (m.includes('OracleInvalidAccount')) return 'No Pyth price account for this feed on this cluster (localnet has none — use devnet or a Hermes-posted price).'
+  if (m.includes('OraclePriceTooLate')) return 'The first Pyth price after expiry was outside the 2h resolution window.'
+  if (m.includes('NotExpired')) return 'Not expired yet.'
+  return m
+}
 
 export default function App() {
   const { connection } = useConnection()
@@ -55,6 +83,13 @@ export default function App() {
   const [leverage, setLeverage] = useState('5')
   const [isLong, setIsLong] = useState(true)
 
+  // F3 prediction: jenis pasar yg mau dinyalain + durasi, jam on-chain (offset vs jam lokal), akun Pyth.
+  const [igniteKind, setIgniteKind] = useState(MARKET_KIND_PERP)
+  const [duration, setDuration] = useState(DURATIONS[0])
+  const [chainOffset, setChainOffset] = useState(0) // detik: jam on-chain - jam lokal
+  const [tick, setTick] = useState(() => Date.now())
+  const [pythAcct, setPythAcct] = useState<PythAcct>(null)
+
   const feedKey = useMemo(() => feedPubkey(feed.pythId), [feed])
   const marketKey = useMemo(() => marketPda(feedKey), [feedKey])
   const vaultKey = useMemo(() => vaultPda(marketKey), [marketKey])
@@ -74,6 +109,11 @@ export default function App() {
               markPrice: Number(pick(m, 'markPrice', 'mark_price').toString()),
               totalLong: Number(pick(m, 'totalLong', 'total_long').toString()),
               totalShort: Number(pick(m, 'totalShort', 'total_short').toString()),
+              kind: Number(pick(m, 'marketKind', 'market_kind')),
+              expiryTs: Number(pick(m, 'expiryTs', 'expiry_ts').toString()),
+              resolved: !!pick(m, 'resolved', 'resolved'),
+              resolutionPrice: Number(pick(m, 'resolutionPrice', 'resolution_price').toString()),
+              lastOracleTs: Number(pick(m, 'lastOracleTs', 'last_oracle_ts').toString()),
             }
           : null,
       )
@@ -123,6 +163,45 @@ export default function App() {
     return () => clearInterval(t)
   }, [refresh, refreshPyth, refreshBalance])
 
+  // Jam on-chain (bukan jam laptop): countdown & expiry ngikut Clock validator.
+  const refreshChain = useCallback(async () => {
+    try {
+      const t = await connection.getBlockTime(await connection.getSlot('confirmed'))
+      if (t != null) setChainOffset(t - Date.now() / 1000)
+    } catch {
+      /* ignore */
+    }
+  }, [connection])
+
+  // Akun harga Pyth sponsored buat feed ini — cuma buat tampilan ("terakhir terbit"); kontrak baca sendiri.
+  const refreshPythAcct = useCallback(async () => {
+    try {
+      const a = await connection.getAccountInfo(pythPriceAccount(feed.pythId))
+      setPythAcct(a ? decodePythPrice(a.data) ?? 'missing' : 'missing')
+    } catch {
+      /* ignore */
+    }
+  }, [connection, feed])
+
+  useEffect(() => {
+    refreshChain()
+    refreshPythAcct()
+    const t = setInterval(() => {
+      refreshChain()
+      refreshPythAcct()
+    }, 10000)
+    return () => clearInterval(t)
+  }, [refreshChain, refreshPythAcct])
+
+  const isPred = market?.kind === MARKET_KIND_PREDICTION
+  useEffect(() => {
+    if (!isPred) return
+    const t = setInterval(() => setTick(Date.now()), 500)
+    return () => clearInterval(t)
+  }, [isPred])
+  const chainNow = tick / 1000 + chainOffset
+  const expired = isPred && !!market && chainNow >= market.expiryTs
+
   // Localnet burner: auto top-up from the local validator (unlimited). Retries until the validator is up
   // and the burner is funded, so there is zero wallet/faucet friction.
   useEffect(() => {
@@ -167,15 +246,24 @@ export default function App() {
 
   const createMarket = async () => {
     if (!program || !publicKey) return
+    const pred = igniteKind === MARKET_KIND_PREDICTION
     setBusy(true)
-    say('Igniting market…')
+    say(pred ? 'Igniting prediction market…' : 'Igniting market…')
     try {
-      const p6 = pyth ?? Math.round(feed.fallback * PRICE_ONE)
+      // Prediction: start from the latest Pyth price for this feed when the cluster has one (devnet), so the
+      // bet is against the real price; perp golden path keeps the reference price, unchanged.
+      const pythNow = pythAcct && pythAcct !== 'missing' ? pythAcct.price6 : null
+      const p6 = pred && pythNow ? pythNow : pyth ?? Math.round(feed.fallback * PRICE_ONE)
+      let expiry = 0
+      if (pred) {
+        const t = await connection.getBlockTime(await connection.getSlot('confirmed'))
+        expiry = (t ?? Math.floor(Date.now() / 1000)) + duration
+      }
       // Pool must cover a winning 5x close (+125% on collateral). 0.5 SOL was too thin → close-after-pump
       // hit InsufficientLiquidity (audit 4 Oct); 2 SOL covers the scripted demo with margin.
       const s = await (program.methods as any)
-        // F3: market_kind=0 (PERP) + expiry=0 -> golden path demo tetep perp perpetual, NOL berubah.
-        .createMarket(feedKey, new BN(p6), new BN(2 * LAMPORTS), new BN(SKEW_SCALE), 0, new BN(0))
+        // F3: perp = market_kind 0 + expiry 0 (golden path unchanged); prediction = kind 1 + on-chain expiry.
+        .createMarket(feedKey, new BN(p6), new BN(2 * LAMPORTS), new BN(SKEW_SCALE), pred ? MARKET_KIND_PREDICTION : MARKET_KIND_PERP, new BN(expiry))
         .accountsPartial({
           authority: publicKey,
           market: marketKey,
@@ -184,11 +272,35 @@ export default function App() {
         })
         .rpc()
       setSig(s)
-      say('Market live — on-chain mark ready. Move the price with pump / crash (demo).')
-      setKeeperOn(true)
+      say(
+        pred
+          ? `Prediction market live — expires in ${fmtDur(duration)}, then anyone can resolve it from Pyth.`
+          : 'Market live — on-chain mark ready. Move the price with pump / crash (demo).',
+      )
+      setKeeperOn(!pred)
       await refresh()
     } catch (e: any) {
       say('Failed: ' + (e?.message ?? String(e)))
+    }
+    setBusy(false)
+  }
+
+  // F3+F2: resolve — anyone, after expiry. The contract reads the Pyth price account itself (owner, Full
+  // verification, feed id, published inside [expiry, expiry+2h]) and locks it. Nobody types the price.
+  const resolveMarket = async () => {
+    if (!program || !publicKey) return
+    setBusy(true)
+    say('Resolving from Pyth…')
+    try {
+      const s = await (program.methods as any)
+        .resolveMarket()
+        .accountsPartial({ resolver: publicKey, market: marketKey, priceUpdate: pythPriceAccount(feed.pythId) })
+        .rpc()
+      setSig(s)
+      say('Resolved — the contract read Pyth and locked the price. Close to settle.')
+      await refresh()
+    } catch (e: any) {
+      say('Not resolved: ' + explainResolve(e, pythAcct, chainNow))
     }
     setBusy(false)
   }
@@ -301,7 +413,9 @@ export default function App() {
     setBusy(false)
   }
 
-  const mark = market?.markPrice ?? pyth ?? 0
+  // A resolved prediction settles at the locked Pyth price (mirrors close_position on-chain).
+  const mark = market?.resolved ? market.resolutionPrice : market?.markPrice ?? pyth ?? 0
+  const pythReady = isPred && !!market && pythAcct && pythAcct !== 'missing' && pythAcct.publishTime >= market.expiryTs
   let pnl = 0
   let equity = 0
   if (position && mark > 0 && position.entryPrice > 0) {
@@ -386,7 +500,11 @@ export default function App() {
                     ? position
                       ? `${posLev}× ${position.isLong ? 'long' : 'short'} open`
                       : market
-                      ? 'market live'
+                      ? isPred
+                        ? market.resolved
+                          ? 'resolved'
+                          : 'prediction live'
+                        : 'market live'
                       : 'no market'
                     : 'tap to view'
                   const p6 = on && market ? mark : Math.round(f.fallback * PRICE_ONE)
@@ -412,9 +530,26 @@ export default function App() {
               </div>
               <div className="ignite-box">
                 <div className="rail-label">ANY PYTH FEED</div>
-                <p>Permissionless. Pick a feed, ignite, trade in ten seconds.</p>
+                <div className="seg kind">
+                  <button className={igniteKind === MARKET_KIND_PERP ? 'active' : ''} disabled={!!market} onClick={() => setIgniteKind(MARKET_KIND_PERP)}>PERP</button>
+                  <button className={igniteKind === MARKET_KIND_PREDICTION ? 'active' : ''} disabled={!!market} onClick={() => setIgniteKind(MARKET_KIND_PREDICTION)}>PREDICTION</button>
+                </div>
+                {igniteKind === MARKET_KIND_PREDICTION && !market && (
+                  <div className="seg kind three">
+                    {DURATIONS.map((d) => (
+                      <button key={d} className={duration === d ? 'active' : ''} onClick={() => setDuration(d)}>
+                        {d >= 3600 ? `${d / 3600}H` : `${d / 60}M`}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <p>
+                  {igniteKind === MARKET_KIND_PREDICTION
+                    ? 'Same engine, with an expiry. When it expires, anyone resolves it — the contract reads the Pyth price itself.'
+                    : 'Permissionless. Pick a feed, ignite, trade in ten seconds.'}
+                </p>
                 <button className="btn ignite" disabled={busy || !!market} onClick={createMarket}>
-                  {market ? 'MARKET LIVE' : 'IGNITE MARKET'}
+                  {market ? 'MARKET LIVE' : igniteKind === MARKET_KIND_PREDICTION ? `IGNITE PREDICTION · ${fmtDur(duration)}` : 'IGNITE MARKET'}
                 </button>
               </div>
             </aside>
@@ -422,9 +557,11 @@ export default function App() {
             {/* CENTER — market */}
             <main className="main">
               <div className="main-head">
-                <span className="lbl">{feed.symbol} perpetual</span>
+                <span className="lbl">{feed.symbol} {isPred ? 'prediction' : 'perpetual'}</span>
                 <span className="sep" />
-                <span className="meta">vAMM · on-chain settlement</span>
+                <span className="meta">
+                  {isPred && market ? `expires ${fmtClock(market.expiryTs)} · resolved from Pyth` : 'vAMM · on-chain settlement'}
+                </span>
               </div>
 
               <div className="pxwrap">
@@ -444,8 +581,46 @@ export default function App() {
                 <span className="pulse" />
                 <span className="t">
                   oracle · Pyth feed <span className="dim">{feedShort}</span>
+                  {market &&
+                    (market.lastOracleTs > 0 ? (
+                      <> · price verified on-chain <span className="dim">published {fmtClock(market.lastOracleTs)}</span></>
+                    ) : (
+                      <> · <span className="dim">mark set by market creator (demo)</span></>
+                    ))}
                 </span>
               </div>
+
+              {market && isPred && (
+                <div className="resolve">
+                  {!expired ? (
+                    <>
+                      <div className="k">RESOLVES IN</div>
+                      <div className="v num">{fmtDur(market.expiryTs - chainNow)}</div>
+                      <div className="sub">At expiry anyone can resolve it. The contract reads the Pyth price account itself — nobody types the result in.</div>
+                    </>
+                  ) : !market.resolved ? (
+                    <>
+                      <div className="k">EXPIRED · AWAITING PYTH</div>
+                      <div className="sub">
+                        {pythAcct === 'missing'
+                          ? 'No Pyth price account for this feed on this cluster.'
+                          : pythAcct
+                          ? `Latest Pyth price ${fmtUsd(pythAcct.price6)} published ${fmtAgo(chainNow - pythAcct.publishTime)}${
+                              pythReady ? ' — after expiry, ready to resolve.' : ' — before expiry; waiting for the next Pyth update (~hourly).'
+                            }`
+                          : 'Checking Pyth…'}
+                      </div>
+                      <button className="btn primary" disabled={busy} onClick={resolveMarket}>RESOLVE FROM PYTH</button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="k">RESOLVED · PYTH VERIFIED</div>
+                      <div className="v num">{fmtUsd(market.resolutionPrice)}</div>
+                      <div className="sub">Published {fmtClock(market.lastOracleTs)} · locked on-chain · positions settle at this price</div>
+                    </>
+                  )}
+                </div>
+              )}
 
               {!market ? (
                 <div className="no-market">
@@ -466,7 +641,7 @@ export default function App() {
                       <>
                         <div><div className="k">Mark</div><div className="v num">{fmtUsd(market.markPrice)}</div></div>
                         <div><div className="k">Open interest</div><div className="v num">{fmtSol(market.totalLong)}<small>SOL</small></div></div>
-                        <div><div className="k">Oracle</div><div className="v">Pyth</div></div>
+                        <div><div className="k">Price source</div><div className="v">{market.lastOracleTs > 0 ? 'Pyth ✓' : 'Creator-set'}</div></div>
                         <div><div className="k">Counterparty</div><div className="v">vAMM</div></div>
                       </>
                     )}
@@ -506,7 +681,8 @@ export default function App() {
                     </div>
                   )}
 
-                  {isAuthority && position && (
+                  {/* Pump/crash = creator override; hidden on prediction markets, where only Pyth decides. */}
+                  {isAuthority && position && !isPred && (
                     <div className="demostrip">
                       <span className="lbl">AUTHORITY · DEMO</span>
                       <button className="btn ghost" disabled={busy} onClick={pumpPrice}>pump +25%</button>
@@ -548,8 +724,8 @@ export default function App() {
                   </div>
 
                   <div className="spacer" />
-                  <button className="btn primary" disabled={busy || !market} onClick={openPosition}>
-                    {market ? `OPEN ${isLong ? 'LONG' : 'SHORT'}` : 'IGNITE MARKET FIRST'}
+                  <button className="btn primary" disabled={busy || !market || expired} onClick={openPosition}>
+                    {!market ? 'IGNITE MARKET FIRST' : expired ? 'MARKET EXPIRED' : `OPEN ${isLong ? 'LONG' : 'SHORT'}`}
                   </button>
                 </>
               ) : (

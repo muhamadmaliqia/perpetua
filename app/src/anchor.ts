@@ -26,6 +26,32 @@ export function feedPubkey(pythId: string): PublicKey {
   return new PublicKey(Buffer.from(pythId, 'hex'))
 }
 
+// F3: jenis pasar (sama dgn constants.rs).
+export const MARKET_KIND_PERP = 0
+export const MARKET_KIND_PREDICTION = 1
+
+// F2: akun harga Pyth "sponsored" (PriceUpdateV2, di-update Pyth sendiri) = PDA program push-oracle,
+// seed [shard u16 LE, feed_id]. Terukur 14 Okt 2026: SOL/USD -> 7UVi…; di devnet ada buat XAU/SOL/BTC/ETH
+// (US500 belum), update ~sejam sekali. Kontrak baca akun ini sendiri buat resolve (owner/Full/feed dicek on-chain).
+const PYTH_PUSH_ORACLE = new PublicKey('pythWSnswVUd12oZpeFP8e9CVaEqJg25g1Vtc2biRsT')
+export function pythPriceAccount(pythId: string, shard = 0): PublicKey {
+  const s = Buffer.alloc(2)
+  s.writeUInt16LE(shard)
+  return PublicKey.findProgramAddressSync([s, Buffer.from(pythId, 'hex')], PYTH_PUSH_ORACLE)[0]
+}
+
+// Baca harga + publish_time dari data akun PriceUpdateV2 (layout sama dgn programs/perpetua/src/pyth.rs).
+// null kalau bukan verifikasi Full / data kependekan. Cuma buat tampilan — keputusan tetap di kontrak.
+export function decodePythPrice(data: Uint8Array): { price6: number; publishTime: number } | null {
+  if (data.length < 41 + 60 || data[40] !== 1) return null
+  const b = Buffer.from(data)
+  const o = 41
+  const price = Number(b.readBigInt64LE(o + 32))
+  const expo = b.readInt32LE(o + 48)
+  const publishTime = Number(b.readBigInt64LE(o + 52))
+  return { price6: Math.round(price * 10 ** (expo + 6)), publishTime }
+}
+
 export function marketPda(feed: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from('market'), feed.toBuffer()], PROGRAM_ID)[0]
 }
