@@ -20,8 +20,12 @@ permissionless and instant:
 - **Anyone** calls `create_market(feed)` and a leveraged market exists ~10s later.
 - The counterparty is an **automated liquidity pool** (a simple vAMM) — no orderbook,
   no matching engine, no market makers to court.
-- Each market's oracle identity is a **Pyth** feed; PnL updates live from the on-chain
-  mark, and every action settles on-chain.
+- Each market's oracle identity is a **Pyth** feed. The program reads Pyth's on-chain
+  `PriceUpdateV2` accounts itself (owner, full Wormhole verification, feed id, confidence,
+  freshness) — anyone can push a verified price, and every action settles on-chain.
+- **Prediction markets are the same engine with an expiry**: when it expires, *anyone* can
+  resolve it and the contract locks a verified Pyth price published within two hours after expiry. Nobody
+  types the result in — not even the market's creator.
 
 Perps on predictions already exists. *Permissionless, instant, any-feed market
 **creation*** is the wedge.
@@ -39,24 +43,32 @@ Perps on predictions already exists. *Permissionless, instant, any-feed market
             └──────┬───────┘                            ├──────────────────────┤
                    │  SOL in/out                        │ Vault PDA (liquidity)│
                    ▼                                     └──────────────────────┘
-            set_mark_price ──(Pyth keeper in prod · pump/crash in demo)──▶ mark_price
+   Pyth PriceUpdateV2 ──▶ update_mark_from_pyth (anyone) ──▶ mark_price
+                     └──▶ resolve_market (anyone, after expiry) ──▶ resolution_price (locked)
+   set_mark_price (market creator only) ── demo pump/crash override ──▶ mark_price
 ```
 
 **On-chain accounts (PDAs)**
 | Account | Seeds | Holds |
 |---|---|---|
-| `Market` | `["market", feed]` | authority, oracle feed, mark price, open interest |
+| `Market` | `["market", feed]` | authority, oracle feed, mark price, open interest, skew/funding, kind + expiry, resolution price, last Pyth publish time |
 | `Position` | `["position", market, owner]` | side, size, collateral, entry price |
 | `Vault` | `["vault", market]` | the liquidity pool (native SOL) |
 
 **Instructions**
 | Instruction | What it does |
 |---|---|
-| `create_market` | Ignite a market for a feed + seed initial liquidity — *permissionless* |
+| `create_market` | Ignite a perp *or* prediction market (with expiry) for a feed + seed initial liquidity — *permissionless* |
 | `open_position` | Long/short with leverage; collateral locked into the vault |
-| `close_position` | Settle PnL vs mark price; payout = `max(0, equity)` |
+| `close_position` | Settle PnL vs mark price (or the locked resolution price); payout = `max(0, equity)` |
 | `liquidate_position` | **Permissionless** force-close when equity ≤ 5% of notional; liquidator earns a 1% bounty |
-| `set_mark_price` | Price ingress — a Pyth keeper in production; driven by demo pump/crash controls here |
+| `update_mark_from_pyth` | **Permissionless** — pushes a Pyth price the program verifies itself: owner = Pyth Receiver, full verification, matching feed, ≤ 120 s old, confidence ≤ 1%, never older than the last one |
+| `resolve_market` | **Permissionless**, after expiry — locks a verified Pyth price published in `[expiry, expiry + 2h]` as the result |
+| `set_mark_price` | Market-creator override that drives the demo pump/crash controls. Never used to resolve; the UI labels it "Creator-set" |
+
+Pyth accounts are decoded by hand in `programs/perpetua/src/pyth.rs` (layout mirrored from
+`pyth-solana-receiver-sdk` 2.0.0 and checked against a real devnet account in the tests) —
+the SDK pulls in the monolithic `solana-program` crate, which clashes with Agave 4.x.
 
 Collateral is **native SOL** (no SPL setup) for a fast, frictionless demo.
 
@@ -66,10 +78,10 @@ Collateral is **native SOL** (no SPL setup) for a fast, frictionless demo.
 
 | Piece | State |
 |---|---|
-| On-chain program (5 instructions) | ✅ complete — `cargo test` **4 passing** (trade loop, +25% close, liquidation, self-liquidation) |
-| Deploy path | ✅ verified on a validator (~1.53 SOL, 219 KB program) |
-| Client/frontend wiring | ✅ verified end-to-end via smoke test against a live program |
-| Frontend (React, dark-terminal UI) | ✅ builds clean; wired to all 5 instructions, live PnL from the on-chain mark |
+| On-chain program (7 instructions) | ✅ `cargo test` **12 passing** — trade loop, +25% close, liquidation, skew fill, funding, prediction resolve from Pyth, creator can't fake the result, bad-oracle rejections, permissionless Pyth push, parser vs real devnet Pyth bytes |
+| Client wiring, end-to-end | ✅ `bash e2e-local.sh` **3/3** on a local validator — perp loop; prediction vs a real Pyth account cloned from devnet (correctly waits); prediction vs a synthetic test fixture (resolves, settles) |
+| Frontend (React) | ✅ builds clean; perp + prediction (countdown, resolve from Pyth, locked price), honest price-source label |
+| Fresh Pyth prices on localnet | ⏳ needs a Pyth Hermes key (signed updates are key-gated). Without one, Pyth's sponsored accounts on devnet/mainnet update about hourly |
 | Devnet deployment | ⏳ pending (awaiting devnet SOL) |
 
 ---
@@ -81,7 +93,8 @@ Collateral is **native SOL** (no SPL setup) for a fast, frictionless demo.
 ```bash
 # 1. Program: build + test
 anchor build
-cargo test -p perpetua              # 4 passing: trade loop, +25% close, liquidation, self-liquidation
+cargo test -p perpetua              # 12 passing
+bash e2e-local.sh                   # optional: full client E2E on a local validator (needs internet)
 
 # 2. Deploy (devnet)
 solana airdrop 2                    # fund the wallet (or use faucet.solana.com)
@@ -130,6 +143,8 @@ needs. On a slower or pricier chain, the core experience simply doesn't land.
 
 ## Roadmap (post-hackathon)
 
-- On-chain Pyth verification (pull-oracle price updates) replacing the keeper ingress
-- Real vAMM depth / price impact + funding rates
+- Post fresh Pyth updates from the app (Hermes pull) so prediction markets resolve seconds after expiry
+- Pin resolution to the first Pyth update after expiry (`prev_publish_time < expiry <= publish_time`),
+  so exactly one price can settle a market instead of any verified price in the 2h window
+- Retire the creator price override on markets that have live Pyth prices
 - Free-form event markets (the full "market on anything" vision)

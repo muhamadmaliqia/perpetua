@@ -6,3 +6,8 @@ node_modules
 test-ledger
 .yarn
 .surfpool
+
+# secrets (Pyth Hermes key, etc.) - never commit
+.env
+.env.*
+!.env.example
