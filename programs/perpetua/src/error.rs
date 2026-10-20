@@ -30,4 +30,18 @@ pub enum PerpetuaError {
     AlreadyResolved,
     #[msg("Prediction market is expired — cannot open new positions")]
     MarketExpired,
+    #[msg("Oracle account is not a Pyth PriceUpdateV2 account")]
+    OracleInvalidAccount,
+    #[msg("Oracle price is not fully verified by Wormhole guardians")]
+    OracleNotFullyVerified,
+    #[msg("Oracle price is for a different feed than this market")]
+    OracleFeedMismatch,
+    #[msg("Oracle confidence interval is too wide")]
+    OracleConfidenceTooWide,
+    #[msg("Oracle price is too old")]
+    StaleOracle,
+    #[msg("Oracle price was published before the market expiry")]
+    OraclePriceBeforeExpiry,
+    #[msg("Oracle price was published after the resolution window")]
+    OraclePriceTooLate,
 }

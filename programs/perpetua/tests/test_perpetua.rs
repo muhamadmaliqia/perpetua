@@ -5,6 +5,7 @@ use {
         AccountDeserialize, InstructionData, ToAccountMetas,
     },
     litesvm::LiteSVM,
+    solana_account::Account,
     solana_keypair::Keypair,
     solana_message::{Message, VersionedMessage},
     solana_signer::Signer,
@@ -40,14 +41,6 @@ fn send(svm: &mut LiteSVM, ix: Instruction, payer: &Keypair) {
     assert!(res.is_ok(), "tx gagal: {:?}", res.err());
 }
 
-/// Kirim tx yang BOLEH gagal; return true kalau sukses. Buat ngetes jalur yang mesti DITOLAK.
-fn try_send(svm: &mut LiteSVM, ix: Instruction, payer: &Keypair) -> bool {
-    let bh = svm.latest_blockhash();
-    let msg = Message::new_with_blockhash(&[ix], Some(&payer.pubkey()), &bh);
-    let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[payer]).unwrap();
-    svm.send_transaction(tx).is_ok()
-}
-
 fn market_pdas(program_id: &Pubkey, feed: &Pubkey, user: &Pubkey) -> (Pubkey, Pubkey, Pubkey) {
     let (market, _) =
         Pubkey::find_program_address(&[perpetua::constants::MARKET_SEED, feed.as_ref()], program_id);
@@ -78,6 +71,95 @@ fn load_position(svm: &LiteSVM, key: &Pubkey) -> perpetua::state::Position {
     perpetua::state::Position::try_deserialize(&mut data).unwrap()
 }
 
+/// Kirim tx yang MESTI gagal dengan error program tertentu (kode Anchor = 6000 + urutan enum).
+/// Blockhash di-expire sebelum & sesudah: penolakan nggak ketuker sama AlreadyProcessed, dan tx
+/// sah berikutnya (sering byte-identik sama percobaan gagal ini) dapet blockhash baru.
+fn expect_err(svm: &mut LiteSVM, ix: Instruction, payer: &Keypair, code: u32, what: &str) {
+    svm.expire_blockhash();
+    let bh = svm.latest_blockhash();
+    let msg = Message::new_with_blockhash(&[ix], Some(&payer.pubkey()), &bh);
+    let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(msg), &[payer]).unwrap();
+    let res = svm.send_transaction(tx);
+    svm.expire_blockhash();
+    match res {
+        Ok(_) => panic!("{}: tx mestinya DITOLAK dgn Custom({})", what, code),
+        Err(e) => {
+            let got = format!("{:?}", e.err);
+            assert!(
+                got.contains(&format!("Custom({})", code)),
+                "{}: mau Custom({}), dapet {}",
+                what,
+                code,
+                got
+            );
+        }
+    }
+}
+
+fn err_code(e: perpetua::error::PerpetuaError) -> u32 {
+    6000 + e as u32
+}
+
+fn set_clock(svm: &mut LiteSVM, unix_ts: i64) {
+    let mut clock: Clock = svm.get_sysvar();
+    clock.unix_timestamp = unix_ts;
+    svm.set_sysvar(&clock);
+}
+
+/// Akun PriceUpdateV2 ASLI dari devnet (SOL/USD sponsored 7UVi…, owner Pyth Receiver), diambil
+/// 14 Okt 2026 via getAccountInfo. Parser kontrak diuji ke byte beneran, bukan fixture karangan
+/// sendiri: price=10745547506 expo=-8 ($107.45547506), conf=3012360, publish_time=1791921644.
+const REAL_PYTH_SOL_USD: [u8; 134] = [
+     34,241, 35, 99,157,126,244,205, 96, 49, 71,  4, 52, 13,237,223,
+     55, 31,212, 36,114, 20,143, 36,142,157, 26,109, 26, 94,178,172,
+     58,205,139,127,213,214,178, 67,  1,239, 13,139,111,218, 44,235,
+    164, 29,161, 93, 64,149,209,218, 57, 42, 13, 47,142,208,198,199,
+    188, 15, 76,250,200,194,128,181,109,242, 10,124,128,  2,  0,  0,
+      0,  8,247, 45,  0,  0,  0,  0,  0,248,255,255,255,236,141,206,
+    106,  0,  0,  0,  0,235,141,206,106,  0,  0,  0,  0, 84, 62,244,
+    128,  2,  0,  0,  0,236,104, 48,  0,  0,  0,  0,  0,189, 65,113,
+     30,  0,  0,  0,  0,  0,
+];
+const REAL_PYTH_PUBLISH_TIME: i64 = 1_791_921_644;
+
+/// Data akun PriceUpdateV2 (layout Pyth Receiver, 134 byte). full=false -> Partial{5 sig}.
+fn pyth_data(feed: &Pubkey, price: i64, conf: u64, expo: i32, publish_time: i64, full: bool) -> Vec<u8> {
+    let mut d = Vec::with_capacity(134);
+    d.extend_from_slice(&perpetua::pyth::PRICE_UPDATE_V2_DISCRIMINATOR);
+    d.extend_from_slice(&[7u8; 32]); // write_authority
+    if full {
+        d.push(1);
+    } else {
+        d.push(0);
+        d.push(5);
+    }
+    d.extend_from_slice(feed.as_ref());
+    d.extend_from_slice(&price.to_le_bytes());
+    d.extend_from_slice(&conf.to_le_bytes());
+    d.extend_from_slice(&expo.to_le_bytes());
+    d.extend_from_slice(&publish_time.to_le_bytes());
+    d.extend_from_slice(&(publish_time - 1).to_le_bytes()); // prev_publish_time
+    d.extend_from_slice(&price.to_le_bytes()); // ema_price
+    d.extend_from_slice(&conf.to_le_bytes()); // ema_conf
+    d.extend_from_slice(&0u64.to_le_bytes()); // posted_slot
+    d.resize(134, 0);
+    d
+}
+
+/// Pasang akun harga di `key` (owner asli: Pyth Receiver; owner lain = akun palsu).
+fn put_pyth(svm: &mut LiteSVM, key: Pubkey, data: Vec<u8>, owner: Pubkey) {
+    svm.set_account(
+        key,
+        Account { lamports: SOL, data, owner, executable: false, rent_epoch: 0 },
+    )
+    .unwrap();
+}
+
+/// Harga Pyth dgn expo -8 (format asli feed USD): dolar -> integer mentah.
+fn pyth_usd(dollars: i64) -> i64 {
+    dollars * 100_000_000
+}
+
 // Perp default (kind=0, expiry=0) — 6 test lama manggil ini, NOL berubah.
 fn ix_create_market(program_id: Pubkey, user: &Pubkey, feed: Pubkey, market: Pubkey, vault: Pubkey, price: u64, liq: u64, skew_scale: u64) -> Instruction {
     ix_create_market_kind(program_id, user, feed, market, vault, price, liq, skew_scale, perpetua::constants::MARKET_KIND_PERP, 0)
@@ -106,14 +188,29 @@ fn ix_create_market_kind(program_id: Pubkey, user: &Pubkey, feed: Pubkey, market
     )
 }
 
-// F3: resolve prediction market (permissionless — resolver siapa pun).
-fn ix_resolve(program_id: Pubkey, resolver: &Pubkey, market: Pubkey) -> Instruction {
+// F3+F2: resolve prediction market (permissionless — resolver siapa pun) dari akun harga Pyth.
+fn ix_resolve(program_id: Pubkey, resolver: &Pubkey, market: Pubkey, price_update: Pubkey) -> Instruction {
     Instruction::new_with_bytes(
         program_id,
         &perpetua::instruction::ResolveMarket {}.data(),
         perpetua::accounts::ResolveMarket {
             resolver: *resolver,
             market,
+            price_update,
+        }
+        .to_account_metas(None),
+    )
+}
+
+// F2: dorong harga Pyth terverifikasi ke mark (permissionless — keeper siapa pun).
+fn ix_update_mark(program_id: Pubkey, cranker: &Pubkey, market: Pubkey, price_update: Pubkey) -> Instruction {
+    Instruction::new_with_bytes(
+        program_id,
+        &perpetua::instruction::UpdateMarkFromPyth {}.data(),
+        perpetua::accounts::UpdateMarkFromPyth {
+            cranker: *cranker,
+            market,
+            price_update,
         }
         .to_account_metas(None),
     )
@@ -420,21 +517,22 @@ fn test_funding_long_heavy_long_pays() {
     assert!(load_market(&svm, &market).cumulative_funding > 0, "cumulative_funding mestinya > 0");
 }
 
-/// F3 SELF-RESOLVING PREDICTION MARKET: pasar prediction ber-expiry. Resolve DITOLAK sebelum
-/// jatuh tempo; pas expiry siapa pun (PIHAK KETIGA) boleh resolve -> kunci harga feed; close
-/// settle di harga TERKUNCI meski live mark berubah; resolve kedua ditolak. Inti wedge:
-/// nggak ada manusia/komite yg mutusin — feed-nya (Pyth via keeper) hakimnya.
+/// F3+F2 SELF-RESOLVING PREDICTION MARKET dari PYTH: pasar prediction ber-expiry. Resolve DITOLAK
+/// sebelum jatuh tempo; pas expiry siapa pun (PIHAK KETIGA) boleh resolve -> kontrak BACA harga
+/// Pyth terverifikasi & kunci; close settle di harga TERKUNCI meski live mark berubah; resolve
+/// kedua ditolak. Nggak ada manusia/komite yg mutusin — Pyth hakimnya.
 #[test]
-fn test_prediction_self_resolve() {
+fn test_prediction_resolves_from_pyth() {
     let (mut svm, program_id) = setup();
     let trader = Keypair::new();
     let resolver = Keypair::new(); // PIHAK KETIGA — bukan authority/owner. Bebas-izin.
     let feed = Pubkey::new_unique();
+    let pyth = Pubkey::new_unique();
     let (market, vault, position) = market_pdas(&program_id, &feed, &trader.pubkey());
     svm.airdrop(&trader.pubkey(), 50 * SOL).unwrap();
     svm.airdrop(&resolver.pubkey(), 1 * SOL).unwrap();
 
-    const PRICE_180: u64 = 180_000_000; // +20% harga feed pas expiry
+    const PRICE_180: u64 = 180_000_000; // +20%: harga Pyth pas expiry
     let clock: Clock = svm.get_sysvar();
     let expiry = clock.unix_timestamp + 3600; // jatuh tempo 1 jam lagi
 
@@ -449,27 +547,26 @@ fn test_prediction_self_resolve() {
     send(&mut svm, ix_open(program_id, &trader.pubkey(), market, vault, position, 2 * SOL, 5, true), &trader);
     assert_eq!(load_position(&svm, &position).entry_price, PRICE_100);
 
-    // RESOLVE SEBELUM JATUH TEMPO -> HARUS DITOLAK (NotExpired).
-    assert!(!try_send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market), &resolver), "resolve sebelum expiry mestinya DITOLAK");
+    // Pyth terbitin $180 lima detik abis jatuh tempo (terverifikasi Full).
+    put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(180), 9_000_000, -8, expiry + 5, true), perpetua::constants::PYTH_RECEIVER_PROGRAM_ID);
 
-    // Majuin jam on-chain ke jatuh tempo. Keeper dorong harga feed +20% -> $180.
-    let mut clock2: Clock = svm.get_sysvar();
-    clock2.unix_timestamp = expiry;
-    svm.set_sysvar(&clock2);
-    send(&mut svm, ix_set_price(program_id, &trader.pubkey(), market, PRICE_180), &trader);
-    svm.expire_blockhash(); // biar tx resolve asli nggak byte-identik dgn percobaan gagal di atas
+    // RESOLVE SEBELUM JATUH TEMPO -> DITOLAK (NotExpired).
+    expect_err(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market, pyth), &resolver, err_code(perpetua::error::PerpetuaError::NotExpired), "resolve sebelum expiry");
 
-    // RESOLVE oleh PIHAK KETIGA (permissionless) -> kunci resolution_price = $180.
-    send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market), &resolver);
+    // Majuin jam on-chain lewat jatuh tempo.
+    set_clock(&mut svm, expiry + 10);
+
+    // RESOLVE oleh PIHAK KETIGA (permissionless) -> kontrak baca Pyth, kunci $180.
+    send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market, pyth), &resolver);
     let m2 = load_market(&svm, &market);
     assert!(m2.resolved, "market mestinya resolved");
-    assert_eq!(m2.resolution_price, PRICE_180, "harga feed pas expiry mestinya TERKUNCI");
+    assert_eq!(m2.resolution_price, PRICE_180, "harga Pyth pas expiry mestinya TERKUNCI");
+    assert_eq!(m2.last_oracle_ts, expiry + 5, "publish_time Pyth mestinya kecatat");
 
     // RESOLVE LAGI -> DITOLAK (AlreadyResolved).
-    svm.expire_blockhash();
-    assert!(!try_send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market), &resolver), "resolve kedua mestinya DITOLAK");
+    expect_err(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market, pyth), &resolver, err_code(perpetua::error::PerpetuaError::AlreadyResolved), "resolve kedua");
 
-    // BUKTI KUNCI: live mark balik turun ke $100, TAPI settle tetap pakai $180 terkunci.
+    // BUKTI KUNCI: live mark diturunin ke $100, TAPI settle tetap pakai $180 terkunci.
     send(&mut svm, ix_set_price(program_id, &trader.pubkey(), market, PRICE_100), &trader);
 
     // CLOSE -> settle di harga RESOLUSI $180 (BUKAN live $100). PnL = 10*(180-100)/100 = 8 SOL,
@@ -491,6 +588,99 @@ fn test_prediction_self_resolve() {
     assert_eq!(load_market(&svm, &market).total_long, 0);
 }
 
+/// CELAH DITUTUP: pembuat pasar pegang LONG lalu ngisi mark $180 sendiri pas expiry
+/// (set_mark_price). Pyth bilang $140. Putusan HARUS $140 — harga karangan pembuat pasar diabaikan.
+#[test]
+fn test_resolve_ignores_creator_mark() {
+    let (mut svm, program_id) = setup();
+    let creator = Keypair::new(); // authority pasar SEKALIGUS trader — calon curang
+    let resolver = Keypair::new();
+    let feed = Pubkey::new_unique();
+    let pyth = Pubkey::new_unique();
+    let (market, vault, position) = market_pdas(&program_id, &feed, &creator.pubkey());
+    svm.airdrop(&creator.pubkey(), 50 * SOL).unwrap();
+    svm.airdrop(&resolver.pubkey(), 1 * SOL).unwrap();
+
+    let expiry = svm.get_sysvar::<Clock>().unix_timestamp + 3600;
+    send(&mut svm, ix_create_market_kind(program_id, &creator.pubkey(), feed, market, vault, PRICE_100, 20 * SOL, SKEW_BIG, perpetua::constants::MARKET_KIND_PREDICTION, expiry), &creator);
+    send(&mut svm, ix_open(program_id, &creator.pubkey(), market, vault, position, 2 * SOL, 5, true), &creator);
+
+    // Pas expiry: pembuat pasar nyoba ngarang $180. Pyth asli bilang $140.
+    set_clock(&mut svm, expiry + 10);
+    send(&mut svm, ix_set_price(program_id, &creator.pubkey(), market, 180_000_000), &creator);
+    put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(140), 7_000_000, -8, expiry + 5, true), perpetua::constants::PYTH_RECEIVER_PROGRAM_ID);
+
+    send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market, pyth), &resolver);
+    assert_eq!(load_market(&svm, &market).resolution_price, 140_000_000, "putusan mestinya harga PYTH $140, bukan karangan $180");
+
+    // CLOSE -> PnL = 10*(140-100)/100 = 4 SOL, payout = 2 + 4 = 6 SOL (BUKAN 10 SOL versi curang).
+    let before = svm.get_account(&creator.pubkey()).unwrap().lamports;
+    let ix = Instruction::new_with_bytes(
+        program_id,
+        &perpetua::instruction::ClosePosition {}.data(),
+        perpetua::accounts::ClosePosition { trader: creator.pubkey(), market, vault, position }.to_account_metas(None),
+    );
+    send(&mut svm, ix, &creator);
+    let after = svm.get_account(&creator.pubkey()).unwrap().lamports;
+    assert!(
+        after > before + 5_900_000_000 && after < before + 6_100_000_000,
+        "payout mestinya ~6 SOL (harga Pyth $140): before={} after={}",
+        before, after
+    );
+}
+
+/// Akun harga yang nggak bener HARUS ditolak — tiap penolakan dicek KODE error-nya:
+/// palsu (owner bukan Pyth), feed lain, verifikasi Partial, terbit sebelum expiry, kelewat
+/// jendela, conf kelebaran. Terakhir yang bener lolos (bukti setup-nya sah).
+#[test]
+fn test_resolve_rejects_bad_oracle() {
+    use perpetua::error::PerpetuaError as E;
+    let (mut svm, program_id) = setup();
+    let creator = Keypair::new();
+    let resolver = Keypair::new();
+    let feed = Pubkey::new_unique();
+    let other_feed = Pubkey::new_unique();
+    let pyth = Pubkey::new_unique();
+    let (market, vault, _position) = market_pdas(&program_id, &feed, &creator.pubkey());
+    svm.airdrop(&creator.pubkey(), 50 * SOL).unwrap();
+    svm.airdrop(&resolver.pubkey(), 1 * SOL).unwrap();
+
+    let expiry = svm.get_sysvar::<Clock>().unix_timestamp + 3600;
+    send(&mut svm, ix_create_market_kind(program_id, &creator.pubkey(), feed, market, vault, PRICE_100, 20 * SOL, SKEW_BIG, perpetua::constants::MARKET_KIND_PREDICTION, expiry), &creator);
+    set_clock(&mut svm, expiry + 10);
+
+    let receiver = perpetua::constants::PYTH_RECEIVER_PROGRAM_ID;
+    let window = perpetua::constants::RESOLVE_WINDOW_SECONDS;
+    let good = |f: &Pubkey, publish: i64| pyth_data(f, pyth_usd(150), 1_000_000, -8, publish, true);
+    let resolve = |pk: Pubkey| ix_resolve(program_id, &resolver.pubkey(), market, pk);
+
+    // 1) Akun PALSU: isinya mirip, tapi owner program lain (bisa dibikin siapa aja).
+    put_pyth(&mut svm, pyth, good(&feed, expiry + 5), Pubkey::new_unique());
+    expect_err(&mut svm, resolve(pyth), &resolver, err_code(E::OracleInvalidAccount), "owner palsu");
+    // 2) Harga feed LAIN.
+    put_pyth(&mut svm, pyth, good(&other_feed, expiry + 5), receiver);
+    expect_err(&mut svm, resolve(pyth), &resolver, err_code(E::OracleFeedMismatch), "feed lain");
+    // 3) Verifikasi Partial (nggak semua guardian).
+    put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(150), 1_000_000, -8, expiry + 5, false), receiver);
+    expect_err(&mut svm, resolve(pyth), &resolver, err_code(E::OracleNotFullyVerified), "Partial");
+    // 4) Harga terbit SEBELUM expiry (harga lama nggak boleh jadi putusan).
+    put_pyth(&mut svm, pyth, good(&feed, expiry - 1), receiver);
+    expect_err(&mut svm, resolve(pyth), &resolver, err_code(E::OraclePriceBeforeExpiry), "sebelum expiry");
+    // 5) Harga terbit LEWAT jendela resolusi (nunggu harga enak).
+    put_pyth(&mut svm, pyth, good(&feed, expiry + window + 1), receiver);
+    expect_err(&mut svm, resolve(pyth), &resolver, err_code(E::OraclePriceTooLate), "lewat jendela");
+    // 6) Conf kelebaran: ±2% dari harga (batas 1%).
+    put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(150), 300_000_000, -8, expiry + 5, true), receiver);
+    expect_err(&mut svm, resolve(pyth), &resolver, err_code(E::OracleConfidenceTooWide), "conf lebar");
+    assert!(!load_market(&svm, &market).resolved, "market belum boleh resolved");
+
+    // 7) Yang bener -> LOLOS. Tepat di ujung jendela masih sah.
+    put_pyth(&mut svm, pyth, good(&feed, expiry + window), receiver);
+    svm.expire_blockhash();
+    send(&mut svm, resolve(pyth), &resolver);
+    assert_eq!(load_market(&svm, &market).resolution_price, 150_000_000);
+}
+
 /// F3: resolve HANYA buat prediction market. Perp (kind=0) ditolak (NotPredictionMarket).
 #[test]
 fn test_resolve_rejects_perp() {
@@ -498,12 +688,89 @@ fn test_resolve_rejects_perp() {
     let user = Keypair::new();
     let resolver = Keypair::new();
     let feed = Pubkey::new_unique();
+    let pyth = Pubkey::new_unique();
     let (market, vault, _position) = market_pdas(&program_id, &feed, &user.pubkey());
     svm.airdrop(&user.pubkey(), 50 * SOL).unwrap();
     svm.airdrop(&resolver.pubkey(), 1 * SOL).unwrap();
 
-    // Pasar PERP biasa (kind=0, expiry=0).
+    // Pasar PERP biasa (kind=0, expiry=0). Akun Pyth-nya sah — yang salah jenis pasarnya.
     send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_100, 10 * SOL, SKEW_BIG), &user);
-    // Resolve perp -> DITOLAK (bukan prediction market).
-    assert!(!try_send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market), &resolver), "resolve pada perp mestinya DITOLAK (NotPredictionMarket)");
+    let now = svm.get_sysvar::<Clock>().unix_timestamp;
+    put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(100), 1_000_000, -8, now, true), perpetua::constants::PYTH_RECEIVER_PROGRAM_ID);
+    expect_err(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market, pyth), &resolver, err_code(perpetua::error::PerpetuaError::NotPredictionMarket), "resolve perp");
+}
+
+/// F2: keeper SIAPA PUN (bukan authority) dorong harga Pyth -> mark ke-skala 6 desimal +
+/// publish_time kecatat. Harga basi (>120 dtk) & harga lebih lama dari yg terakhir ditolak.
+/// Override demo authority nge-reset last_oracle_ts ke 0 (UI nggak boleh pasang badge Pyth).
+#[test]
+fn test_update_mark_from_pyth_permissionless() {
+    use perpetua::error::PerpetuaError as E;
+    let (mut svm, program_id) = setup();
+    let creator = Keypair::new();
+    let keeper = Keypair::new(); // bukan authority
+    let feed = Pubkey::new_unique();
+    let pyth = Pubkey::new_unique();
+    let (market, vault, _position) = market_pdas(&program_id, &feed, &creator.pubkey());
+    svm.airdrop(&creator.pubkey(), 50 * SOL).unwrap();
+    svm.airdrop(&keeper.pubkey(), 1 * SOL).unwrap();
+    let receiver = perpetua::constants::PYTH_RECEIVER_PROGRAM_ID;
+    // Jam litesvm mulai dari 0 — pasang jam realistis biar publish_time nggak negatif.
+    let t: i64 = 1_790_000_000;
+    set_clock(&mut svm, t);
+
+    send(&mut svm, ix_create_market(program_id, &creator.pubkey(), feed, market, vault, PRICE_100, 10 * SOL, SKEW_BIG), &creator);
+    assert_eq!(load_market(&svm, &market).last_oracle_ts, 0, "mark awal BUKAN dari Pyth");
+
+    // Pyth $150 (expo -8), terbit 5 dtk lalu -> mark = 150_000_000.
+    put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(150), 1_000_000, -8, t - 5, true), receiver);
+    send(&mut svm, ix_update_mark(program_id, &keeper.pubkey(), market, pyth), &keeper);
+    let m = load_market(&svm, &market);
+    assert_eq!(m.mark_price, 150_000_000);
+    assert_eq!(m.last_oracle_ts, t - 5);
+
+    // BASI: jam maju 200 dtk, akun masih yang lama (umur 205 dtk > 120).
+    set_clock(&mut svm, t + 200);
+    expect_err(&mut svm, ix_update_mark(program_id, &keeper.pubkey(), market, pyth), &keeper, err_code(E::StaleOracle), "harga basi");
+
+    // Seger lagi: terbit t+190 -> lolos.
+    put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(152), 1_000_000, -8, t + 190, true), receiver);
+    send(&mut svm, ix_update_mark(program_id, &keeper.pubkey(), market, pyth), &keeper);
+    assert_eq!(load_market(&svm, &market).mark_price, 152_000_000);
+
+    // MUNDUR: harga terbit t+150 (masih seger, tapi lebih lama dari t+190 yg udah kepake) -> ditolak.
+    put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(149), 1_000_000, -8, t + 150, true), receiver);
+    expect_err(&mut svm, ix_update_mark(program_id, &keeper.pubkey(), market, pyth), &keeper, err_code(E::StaleOracle), "harga mundur");
+
+    // Override demo authority -> last_oracle_ts balik 0 (mark sekarang bukan Pyth).
+    send(&mut svm, ix_set_price(program_id, &creator.pubkey(), market, 120_000_000), &creator);
+    let m2 = load_market(&svm, &market);
+    assert_eq!(m2.mark_price, 120_000_000);
+    assert_eq!(m2.last_oracle_ts, 0, "override demo mestinya nge-reset badge Pyth");
+}
+
+/// Parser kontrak vs BYTE ASLI akun Pyth devnet (SOL/USD, owner Pyth Receiver): bukan fixture
+/// karangan. Kalau discriminator/offset/skala salah, test ini merah.
+/// price 10745547506 expo -8 -> $107.45547506 -> 6 desimal 107_455_475.
+#[test]
+fn test_update_mark_from_real_pyth_bytes() {
+    let (mut svm, program_id) = setup();
+    let creator = Keypair::new();
+    let keeper = Keypair::new();
+    let mut feed_bytes = [0u8; 32];
+    feed_bytes.copy_from_slice(&REAL_PYTH_SOL_USD[41..73]);
+    let feed = Pubkey::new_from_array(feed_bytes); // = feed id SOL/USD ef0d8b6f…
+    let pyth = Pubkey::new_unique();
+    let (market, vault, _position) = market_pdas(&program_id, &feed, &creator.pubkey());
+    svm.airdrop(&creator.pubkey(), 50 * SOL).unwrap();
+    svm.airdrop(&keeper.pubkey(), 1 * SOL).unwrap();
+
+    send(&mut svm, ix_create_market(program_id, &creator.pubkey(), feed, market, vault, PRICE_100, 10 * SOL, SKEW_BIG), &creator);
+    set_clock(&mut svm, REAL_PYTH_PUBLISH_TIME + 30);
+    put_pyth(&mut svm, pyth, REAL_PYTH_SOL_USD.to_vec(), perpetua::constants::PYTH_RECEIVER_PROGRAM_ID);
+
+    send(&mut svm, ix_update_mark(program_id, &keeper.pubkey(), market, pyth), &keeper);
+    let m = load_market(&svm, &market);
+    assert_eq!(m.mark_price, 107_455_475, "harga SOL/USD asli mestinya kebaca $107.455475");
+    assert_eq!(m.last_oracle_ts, REAL_PYTH_PUBLISH_TIME);
 }

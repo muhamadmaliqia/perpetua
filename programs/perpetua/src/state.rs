@@ -7,10 +7,11 @@ use anchor_lang::prelude::*;
 pub struct Market {
     /// Pembuat pasar (penyetor likuiditas awal).
     pub authority: Pubkey,
-    /// Feed harga (Pyth) yang jadi acuan. H-1: disimpan, belum dibaca.
+    /// Feed harga Pyth yang jadi acuan (32 byte feed id). Dicocokin ke feed_id akun
+    /// PriceUpdateV2 tiap kali harga Pyth dibaca (update_mark_from_pyth / resolve_market).
     pub oracle_feed: Pubkey,
-    /// Harga acuan saat ini, 6 desimal. H-1/H-2: di-set via price ingress
-    /// (set_mark_price manual / update_price_from_pyth).
+    /// Harga acuan saat ini, 6 desimal. Diisi dari Pyth terverifikasi (update_mark_from_pyth,
+    /// bebas-izin) atau override demo authority (set_mark_price).
     pub mark_price: u64,
     /// Total notional posisi long & short (open interest per sisi).
     pub total_long: u64,
@@ -32,8 +33,11 @@ pub struct Market {
     pub expiry_ts: i64,
     /// F3: sudah di-resolve? (prediction). Sekali true, settle pakai resolution_price, bukan mark.
     pub resolved: bool,
-    /// F3: harga feed yang DIKUNCI pas resolve (6-dec). 0 sebelum resolve. Feed-nya hakimnya.
+    /// F3: harga Pyth terverifikasi yang DIKUNCI pas resolve (6-dec). 0 sebelum resolve.
     pub resolution_price: u64,
+    /// F2: publish_time harga Pyth terakhir yang masuk ke mark_price. 0 = mark sekarang
+    /// BUKAN dari Pyth (harga awal / override demo) — UI cuma boleh pasang badge Pyth kalau > 0.
+    pub last_oracle_ts: i64,
     /// Bump PDA vault (kolam lamports lawan-dagang).
     pub vault_bump: u8,
     pub bump: u8,

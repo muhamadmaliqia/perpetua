@@ -29,6 +29,7 @@ solana-message = "4.4.1"
 solana-transaction = "4.1.6"
 solana-signer = "3.0.1"
 solana-keypair = "3.1.2"
+solana-account = "4.3.2"
 
 
 [lints.rust]

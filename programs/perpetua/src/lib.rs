@@ -1,6 +1,7 @@
 pub mod constants;
 pub mod error;
 pub mod instructions;
+pub mod pyth;
 pub mod state;
 
 use anchor_lang::prelude::*;
@@ -36,10 +37,16 @@ pub mod perpetua {
         )
     }
 
-    /// PLACEHOLDER H-1/H-2: set harga acuan manual (authority). Dipakai buat test
-    /// deterministik & fallback demo. H-2+: harga asli via update_price_from_pyth.
+    /// Override demo: set harga acuan manual (authority) — drama pump/crash & test
+    /// deterministik. Harga asli via update_mark_from_pyth. Nggak dipakai buat resolve.
     pub fn set_mark_price(ctx: Context<SetMarkPrice>, price: u64) -> Result<()> {
         crate::instructions::set_mark_price::handle_set_mark_price(ctx, price)
+    }
+
+    /// F2: dorong harga Pyth terverifikasi ke mark — PERMISSIONLESS (keeper siapa pun).
+    /// Kontrak sendiri yang verifikasi akun Pyth: owner, Full, feed, umur, conf.
+    pub fn update_mark_from_pyth(ctx: Context<UpdateMarkFromPyth>) -> Result<()> {
+        crate::instructions::update_mark_from_pyth::handle_update_mark_from_pyth(ctx)
     }
 
     /// Buka posisi long/short dengan pengungkit.
@@ -63,8 +70,9 @@ pub mod perpetua {
         crate::instructions::liquidate_position::handle_liquidate_position(ctx)
     }
 
-    /// F3: resolve prediction market — PERMISSIONLESS, pasca jatuh tempo. Kunci harga feed
-    /// (mark_price, diisi keeper dari Pyth) jadi putusan. Nggak ada komite/manusia.
+    /// F3: resolve prediction market — PERMISSIONLESS, pasca jatuh tempo. Kontrak baca harga
+    /// Pyth terverifikasi (terbit di [expiry, expiry+jendela]) dan kunci jadi putusan.
+    /// Nggak ada komite/manusia, dan pembuat pasar nggak bisa ngarang harganya.
     pub fn resolve_market(ctx: Context<ResolveMarket>) -> Result<()> {
         crate::instructions::resolve_market::handle_resolve_market(ctx)
     }

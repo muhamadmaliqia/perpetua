@@ -430,8 +430,9 @@
     {
       "name": "resolve_market",
       "docs": [
-        "F3: resolve prediction market — PERMISSIONLESS, pasca jatuh tempo. Kunci harga feed",
-        "(mark_price, diisi keeper dari Pyth) jadi putusan. Nggak ada komite/manusia."
+        "F3: resolve prediction market — PERMISSIONLESS, pasca jatuh tempo. Kontrak baca harga",
+        "Pyth terverifikasi (terbit di [expiry, expiry+jendela]) dan kunci jadi putusan.",
+        "Nggak ada komite/manusia, dan pembuat pasar nggak bisa ngarang harganya."
       ],
       "discriminator": [
         155,
@@ -474,6 +475,12 @@
               }
             ]
           }
+        },
+        {
+          "name": "price_update",
+          "docs": [
+            "discriminator PriceUpdateV2, verifikasi Full, feed_id == market.oracle_feed)."
+          ]
         }
       ],
       "args": []
@@ -481,8 +488,8 @@
     {
       "name": "set_mark_price",
       "docs": [
-        "PLACEHOLDER H-1/H-2: set harga acuan manual (authority). Dipakai buat test",
-        "deterministik & fallback demo. H-2+: harga asli via update_price_from_pyth."
+        "Override demo: set harga acuan manual (authority) — drama pump/crash & test",
+        "deterministik. Harga asli via update_mark_from_pyth. Nggak dipakai buat resolve."
       ],
       "discriminator": [
         117,
@@ -533,6 +540,63 @@
           "type": "u64"
         }
       ]
+    },
+    {
+      "name": "update_mark_from_pyth",
+      "docs": [
+        "F2: dorong harga Pyth terverifikasi ke mark — PERMISSIONLESS (keeper siapa pun).",
+        "Kontrak sendiri yang verifikasi akun Pyth: owner, Full, feed, umur, conf."
+      ],
+      "discriminator": [
+        212,
+        4,
+        45,
+        149,
+        255,
+        72,
+        170,
+        223
+      ],
+      "accounts": [
+        {
+          "name": "cranker",
+          "docs": [
+            "Siapa pun. Cuma signer buat bayar fee; NOL privilege."
+          ],
+          "signer": true
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.oracle_feed",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "price_update",
+          "docs": [
+            "discriminator PriceUpdateV2, verifikasi Full, feed_id == market.oracle_feed)."
+          ]
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -646,6 +710,41 @@
       "code": 6013,
       "name": "MarketExpired",
       "msg": "Prediction market is expired — cannot open new positions"
+    },
+    {
+      "code": 6014,
+      "name": "OracleInvalidAccount",
+      "msg": "Oracle account is not a Pyth PriceUpdateV2 account"
+    },
+    {
+      "code": 6015,
+      "name": "OracleNotFullyVerified",
+      "msg": "Oracle price is not fully verified by Wormhole guardians"
+    },
+    {
+      "code": 6016,
+      "name": "OracleFeedMismatch",
+      "msg": "Oracle price is for a different feed than this market"
+    },
+    {
+      "code": 6017,
+      "name": "OracleConfidenceTooWide",
+      "msg": "Oracle confidence interval is too wide"
+    },
+    {
+      "code": 6018,
+      "name": "StaleOracle",
+      "msg": "Oracle price is too old"
+    },
+    {
+      "code": 6019,
+      "name": "OraclePriceBeforeExpiry",
+      "msg": "Oracle price was published before the market expiry"
+    },
+    {
+      "code": 6020,
+      "name": "OraclePriceTooLate",
+      "msg": "Oracle price was published after the resolution window"
     }
   ],
   "types": [
@@ -668,15 +767,16 @@
           {
             "name": "oracle_feed",
             "docs": [
-              "Feed harga (Pyth) yang jadi acuan. H-1: disimpan, belum dibaca."
+              "Feed harga Pyth yang jadi acuan (32 byte feed id). Dicocokin ke feed_id akun",
+              "PriceUpdateV2 tiap kali harga Pyth dibaca (update_mark_from_pyth / resolve_market)."
             ],
             "type": "pubkey"
           },
           {
             "name": "mark_price",
             "docs": [
-              "Harga acuan saat ini, 6 desimal. H-1/H-2: di-set via price ingress",
-              "(set_mark_price manual / update_price_from_pyth)."
+              "Harga acuan saat ini, 6 desimal. Diisi dari Pyth terverifikasi (update_mark_from_pyth,",
+              "bebas-izin) atau override demo authority (set_mark_price)."
             ],
             "type": "u64"
           },
@@ -742,9 +842,17 @@
           {
             "name": "resolution_price",
             "docs": [
-              "F3: harga feed yang DIKUNCI pas resolve (6-dec). 0 sebelum resolve. Feed-nya hakimnya."
+              "F3: harga Pyth terverifikasi yang DIKUNCI pas resolve (6-dec). 0 sebelum resolve."
             ],
             "type": "u64"
+          },
+          {
+            "name": "last_oracle_ts",
+            "docs": [
+              "F2: publish_time harga Pyth terakhir yang masuk ke mark_price. 0 = mark sekarang",
+              "BUKAN dari Pyth (harga awal / override demo) — UI cuma boleh pasang badge Pyth kalau > 0."
+            ],
+            "type": "i64"
           },
           {
             "name": "vault_bump",
@@ -872,8 +980,8 @@
     {
       "name": "MARKET_KIND_PREDICTION",
       "docs": [
-        "F3 market_kind: prediction market = perp ber-expiry yang self-resolve dari feed",
-        "(mark_price, diisi keeper dari Pyth) pas jatuh tempo. Satu primitif, bukan mesin baru."
+        "F3 market_kind: prediction market = perp ber-expiry yang self-resolve dari harga Pyth",
+        "terverifikasi pas jatuh tempo (lihat resolve_market). Satu primitif, bukan mesin baru."
       ],
       "type": "u8",
       "value": "1"
@@ -882,6 +990,14 @@
       "name": "MARKET_SEED",
       "type": "bytes",
       "value": "[109, 97, 114, 107, 101, 116]"
+    },
+    {
+      "name": "MAX_CONF_BPS",
+      "docs": [
+        "F2: lebar ketidakpastian (conf) maksimum dari harga, dalam bps. 100 = 1%."
+      ],
+      "type": "u64",
+      "value": "100"
     },
     {
       "name": "MAX_FUNDING_VELOCITY",
@@ -901,6 +1017,14 @@
       "value": "20"
     },
     {
+      "name": "MAX_PRICE_AGE_SECONDS",
+      "docs": [
+        "F2: umur maksimum harga Pyth buat update mark perp (detik). Lebih tua = ditolak (StaleOracle)."
+      ],
+      "type": "i64",
+      "value": "120"
+    },
+    {
       "name": "POSITION_SEED",
       "type": "bytes",
       "value": "[112, 111, 115, 105, 116, 105, 111, 110]"
@@ -912,6 +1036,15 @@
       ],
       "type": "u64",
       "value": "1000000"
+    },
+    {
+      "name": "RESOLVE_WINDOW_SECONDS",
+      "docs": [
+        "F2+F3: harga Pyth buat resolve harus TERBIT di rentang [expiry, expiry + jendela].",
+        "2 jam = cukup buat akun sponsored yang update-nya jarang (terukur ~1 jam, 14 Okt 2026)."
+      ],
+      "type": "i64",
+      "value": "7200"
     },
     {
       "name": "VAULT_SEED",

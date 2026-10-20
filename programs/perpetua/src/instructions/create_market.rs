@@ -76,6 +76,7 @@ pub fn handle_create_market(
     market.expiry_ts = expiry;
     market.resolved = false;
     market.resolution_price = 0;
+    market.last_oracle_ts = 0;
     market.vault_bump = ctx.bumps.vault;
     market.bump = ctx.bumps.market;
 
