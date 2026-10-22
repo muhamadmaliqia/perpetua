@@ -57,7 +57,7 @@ pub fn handle_create_market(
     );
 
     let now = Clock::get()?.unix_timestamp;
-    // Prediction: wajib jatuh tempo di masa depan. Perp: wajib 0 — expiry ikut jadi seed PDA, jadi
+    // Prediction: wajib jatuh tempo di masa depan. Perp: wajib 0, expiry ikut jadi seed PDA, jadi
     // nilai yang disimpen harus sama persis sama yang dipake nurunin alamat (dulu dipaksa 0 diem-diem).
     let expiry = if market_kind == MARKET_KIND_PREDICTION {
         require!(expiry_ts > now, PerpetuaError::InvalidExpiry);

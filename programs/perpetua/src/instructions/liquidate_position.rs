@@ -25,7 +25,7 @@ pub struct LiquidatePosition<'info> {
         bump = market.vault_bump,
     )]
     pub vault: Account<'info, Vault>,
-    /// Owner posisi — nerima rent balik pas akun ditutup.
+    /// Owner posisi, nerima rent balik pas akun ditutup.
     #[account(mut)]
     pub owner: SystemAccount<'info>,
     #[account(
@@ -60,8 +60,10 @@ pub fn handle_liquidate_position(ctx: Context<LiquidatePosition>) -> Result<()> 
         .accounts
         .position
         .funding_owed(ctx.accounts.market.cumulative_funding);
-    // Funding ikut makan ekuitas: posisi yg numpuk funding jadi makin gampang dilikuidasi.
-    let equity = ctx.accounts.position.equity(mark) - funding;
+    // Ekuitas di harga KELUAR (ikut skew, sama kayak close): yang dinilai = yang beneran dibayar kalau
+    // posisi ditutup sekarang. Funding ikut makan ekuitas: makin numpuk, makin gampang dilikuidasi.
+    let exit = ctx.accounts.market.exit_price(mark, size, is_long)?;
+    let equity = ctx.accounts.position.equity(exit) - funding;
 
     // Maintenance margin = mmr% dari notional. Sehat kalau ekuitas > maintenance.
     let maintenance = (size as u128)

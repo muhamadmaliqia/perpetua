@@ -2,11 +2,11 @@ use anchor_lang::prelude::*;
 
 use crate::{constants::*, error::PerpetuaError, state::Market};
 
-/// OVERRIDE DEMO: harga acuan di-set manual oleh authority (pembuat pasar) — buat drama
+/// OVERRIDE DEMO: harga acuan di-set manual oleh authority (pembuat pasar), buat drama
 /// pump/crash di demo & test deterministik. CUMA buat PERP yang BELUM PERNAH dapet harga Pyth:
 /// - prediction market: ditolak selalu (harganya cuma boleh dari Pyth, termasuk putusannya);
 /// - begitu harga Pyth pertama masuk (update_mark_from_pyth -> last_oracle_ts > 0, nggak pernah
-///   balik 0), override ini PENSIUN permanen buat pasar itu — harga asli nggak bisa dikarang balik.
+///   balik 0), override ini PENSIUN permanen buat pasar itu, harga asli nggak bisa dikarang balik.
 #[derive(Accounts)]
 pub struct SetMarkPrice<'info> {
     #[account(

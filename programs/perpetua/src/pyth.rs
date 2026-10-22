@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 
 use crate::{constants::*, error::PerpetuaError};
 
-/// F2 jalur (c): baca akun PriceUpdateV2 milik Pyth Receiver TANPA SDK — SDK-nya narik
+/// F2 jalur (c): baca akun PriceUpdateV2 milik Pyth Receiver TANPA SDK, SDK-nya narik
 /// solana-program monolitik yang bentrok sama split-crate Agave 4.x kita (skew M-09).
 /// Layout di-mirror dari pyth-solana-receiver-sdk 2.0.0 (price_update.rs) + pythnet-sdk
 /// 3.0.0 (messages.rs), dan dicocokin ke akun asli on-chain (SOL/USD 7UVi…, 14 Okt 2026):
@@ -30,7 +30,7 @@ pub struct PythPrice {
 
 /// Baca harga dari akun PriceUpdateV2 dan pastiin asli: owner = Pyth Receiver, discriminator
 /// cocok, verifikasi Full (semua guardian Wormhole), feed_id = feed pasar. Umur harga NGGAK
-/// dicek di sini — tiap instruksi punya aturan waktunya sendiri (update vs resolve).
+/// dicek di sini, tiap instruksi punya aturan waktunya sendiri (update vs resolve).
 pub fn read_verified_price(price_update: &AccountInfo, feed_id: &[u8; 32]) -> Result<PythPrice> {
     require_keys_eq!(
         *price_update.owner,

@@ -114,7 +114,7 @@
     {
       "name": "create_market",
       "docs": [
-        "Nyalakan pasar leverage baru untuk sebuah feed — bebas-izin."
+        "Nyalakan pasar leverage baru untuk sebuah feed, bebas-izin."
       ],
       "discriminator": [
         103,
@@ -293,7 +293,7 @@
         {
           "name": "owner",
           "docs": [
-            "Owner posisi — nerima rent balik pas akun ditutup."
+            "Owner posisi, nerima rent balik pas akun ditutup."
           ],
           "writable": true
         },
@@ -453,7 +453,7 @@
     {
       "name": "resolve_market",
       "docs": [
-        "F3: resolve prediction market — PERMISSIONLESS, pasca jatuh tempo. Kontrak baca harga",
+        "F3: resolve prediction market, PERMISSIONLESS, pasca jatuh tempo. Kontrak baca harga",
         "Pyth terverifikasi (terbit di [expiry, expiry+jendela]) dan kunci jadi putusan.",
         "Nggak ada komite/manusia, dan pembuat pasar nggak bisa ngarang harganya."
       ],
@@ -516,7 +516,7 @@
     {
       "name": "set_mark_price",
       "docs": [
-        "Override demo: set harga acuan manual (authority) — drama pump/crash & test",
+        "Override demo: set harga acuan manual (authority), drama pump/crash & test",
         "deterministik. Cuma perp yg BELUM pernah dapet harga Pyth; prediction market selalu",
         "ditolak. Harga Pyth pertama mensiunkan override ini permanen. Nggak dipakai buat resolve."
       ],
@@ -578,7 +578,7 @@
     {
       "name": "update_mark_from_pyth",
       "docs": [
-        "F2: dorong harga Pyth terverifikasi ke mark — PERMISSIONLESS (keeper siapa pun).",
+        "F2: dorong harga Pyth terverifikasi ke mark, PERMISSIONLESS (keeper siapa pun).",
         "Kontrak sendiri yang verifikasi akun Pyth: owner, Full, feed, umur, conf."
       ],
       "discriminator": [
@@ -713,7 +713,7 @@
     {
       "code": 6006,
       "name": "PositionHealthy",
-      "msg": "Position is still healthy — not eligible for liquidation"
+      "msg": "Position is still healthy, not eligible for liquidation"
     },
     {
       "code": 6007,
@@ -748,7 +748,7 @@
     {
       "code": 6013,
       "name": "MarketExpired",
-      "msg": "Prediction market is expired — cannot open new positions"
+      "msg": "Prediction market is expired, cannot open new positions"
     },
     {
       "code": 6014,
@@ -788,12 +788,12 @@
     {
       "code": 6021,
       "name": "CreatorPriceOnPrediction",
-      "msg": "Prediction markets are priced by Pyth only — the creator cannot set the price"
+      "msg": "Prediction markets are priced by Pyth only; the creator cannot set the price"
     },
     {
       "code": 6022,
       "name": "CreatorPriceRetired",
-      "msg": "This market already has a Pyth price — the creator price override is retired"
+      "msg": "This market already has a Pyth price, so the creator price override is retired"
     },
     {
       "code": 6023,
@@ -831,7 +831,7 @@
             "name": "mark_price",
             "docs": [
               "Harga acuan saat ini, 6 desimal. Diisi dari Pyth terverifikasi (update_mark_from_pyth,",
-              "bebas-izin) atau override demo authority (set_mark_price — cuma perp yg belum pernah",
+              "bebas-izin) atau override demo authority (set_mark_price, cuma perp yg belum pernah",
               "dapet harga Pyth)."
             ],
             "type": "u64"
@@ -906,7 +906,7 @@
             "name": "last_oracle_ts",
             "docs": [
               "F2: publish_time harga Pyth terakhir yang masuk ke mark_price. 0 = pasar BELUM PERNAH",
-              "dapet harga Pyth (mark = harga awal / override demo) — UI cuma boleh pasang badge Pyth",
+              "dapet harga Pyth (mark = harga awal / override demo), UI cuma boleh pasang badge Pyth",
               "kalau > 0. Sekali > 0 nggak pernah balik 0 -> override pembuat pasar pensiun permanen."
             ],
             "type": "i64"
@@ -1068,7 +1068,7 @@
     {
       "name": "MAX_LEVERAGE",
       "docs": [
-        "Batas pengungkit demo v1 — dijaga sempit biar fokus (M-04)."
+        "Batas pengungkit demo v1, dijaga sempit biar fokus (M-04)."
       ],
       "type": "u64",
       "value": "20"

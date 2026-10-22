@@ -16,7 +16,7 @@ declare_id!("GTaf7icvPHNzDMfd1gt8eN5p3fKERRwPaenfWKjGhaGP");
 pub mod perpetua {
     use super::*;
 
-    /// Nyalakan pasar leverage baru untuk sebuah feed — bebas-izin.
+    /// Nyalakan pasar leverage baru untuk sebuah feed, bebas-izin.
     pub fn create_market(
         ctx: Context<CreateMarket>,
         oracle_feed: Pubkey,
@@ -37,14 +37,14 @@ pub mod perpetua {
         )
     }
 
-    /// Override demo: set harga acuan manual (authority) — drama pump/crash & test
+    /// Override demo: set harga acuan manual (authority), drama pump/crash & test
     /// deterministik. Cuma perp yg BELUM pernah dapet harga Pyth; prediction market selalu
     /// ditolak. Harga Pyth pertama mensiunkan override ini permanen. Nggak dipakai buat resolve.
     pub fn set_mark_price(ctx: Context<SetMarkPrice>, price: u64) -> Result<()> {
         crate::instructions::set_mark_price::handle_set_mark_price(ctx, price)
     }
 
-    /// F2: dorong harga Pyth terverifikasi ke mark — PERMISSIONLESS (keeper siapa pun).
+    /// F2: dorong harga Pyth terverifikasi ke mark, PERMISSIONLESS (keeper siapa pun).
     /// Kontrak sendiri yang verifikasi akun Pyth: owner, Full, feed, umur, conf.
     pub fn update_mark_from_pyth(ctx: Context<UpdateMarkFromPyth>) -> Result<()> {
         crate::instructions::update_mark_from_pyth::handle_update_mark_from_pyth(ctx)
@@ -71,7 +71,7 @@ pub mod perpetua {
         crate::instructions::liquidate_position::handle_liquidate_position(ctx)
     }
 
-    /// F3: resolve prediction market — PERMISSIONLESS, pasca jatuh tempo. Kontrak baca harga
+    /// F3: resolve prediction market, PERMISSIONLESS, pasca jatuh tempo. Kontrak baca harga
     /// Pyth terverifikasi (terbit di [expiry, expiry+jendela]) dan kunci jadi putusan.
     /// Nggak ada komite/manusia, dan pembuat pasar nggak bisa ngarang harganya.
     pub fn resolve_market(ctx: Context<ResolveMarket>) -> Result<()> {

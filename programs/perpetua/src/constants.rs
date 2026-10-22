@@ -13,7 +13,7 @@ pub const VAULT_SEED: &[u8] = b"vault";
 #[constant]
 pub const PRICE_ONE: u64 = 1_000_000;
 
-/// Batas pengungkit demo v1 — dijaga sempit biar fokus (M-04).
+/// Batas pengungkit demo v1, dijaga sempit biar fokus (M-04).
 #[constant]
 pub const MAX_LEVERAGE: u64 = 20;
 

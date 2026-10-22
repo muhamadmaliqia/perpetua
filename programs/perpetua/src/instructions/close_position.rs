@@ -51,13 +51,20 @@ pub fn handle_close_position(ctx: Context<ClosePosition>) -> Result<()> {
 
     let is_long = ctx.accounts.position.is_long;
     let position_size = ctx.accounts.position.size;
-    let pnl = ctx.accounts.position.unrealized_pnl(mark);
+    // Harga keluar: prediksi yang udah resolve settle di harga putusan (final, tanpa premium). Selain itu
+    // ikut skew, cermin harga isi pas buka: buka lalu langsung tutup di pasar sepi = impas.
+    let exit = if resolved_prediction {
+        mark
+    } else {
+        ctx.accounts.market.exit_price(mark, position_size, is_long)?
+    };
+    let pnl = ctx.accounts.position.unrealized_pnl(exit);
     let funding = ctx
         .accounts
         .position
         .funding_owed(ctx.accounts.market.cumulative_funding);
     // Ekuitas setelah funding: long bayar funding pas pasar long-heavy (kurangi payout).
-    let equity = ctx.accounts.position.equity(mark) - funding;
+    let equity = ctx.accounts.position.equity(exit) - funding;
 
     // Payout = ekuitas kalau positif; kalau nggak, 0 (rugi max = seluruh jaminan).
     let payout: u64 = if equity > 0 { equity as u64 } else { 0 };
@@ -93,8 +100,9 @@ pub fn handle_close_position(ctx: Context<ClosePosition>) -> Result<()> {
     }
 
     msg!(
-        "Position closed: mark={} pnl={} payout={}",
+        "Position closed: mark={} exit={} pnl={} payout={}",
         mark,
+        exit,
         pnl,
         payout
     );

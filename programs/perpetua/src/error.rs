@@ -14,7 +14,7 @@ pub enum PerpetuaError {
     InsufficientLiquidity,
     #[msg("Arithmetic overflow")]
     MathOverflow,
-    #[msg("Position is still healthy — not eligible for liquidation")]
+    #[msg("Position is still healthy, not eligible for liquidation")]
     PositionHealthy,
     #[msg("Skew scale (market depth) must be greater than zero")]
     InvalidSkewScale,
@@ -28,7 +28,7 @@ pub enum PerpetuaError {
     NotExpired,
     #[msg("Prediction market is already resolved")]
     AlreadyResolved,
-    #[msg("Prediction market is expired — cannot open new positions")]
+    #[msg("Prediction market is expired, cannot open new positions")]
     MarketExpired,
     #[msg("Oracle account is not a Pyth PriceUpdateV2 account")]
     OracleInvalidAccount,
@@ -44,9 +44,9 @@ pub enum PerpetuaError {
     OraclePriceBeforeExpiry,
     #[msg("Oracle price was published after the resolution window")]
     OraclePriceTooLate,
-    #[msg("Prediction markets are priced by Pyth only — the creator cannot set the price")]
+    #[msg("Prediction markets are priced by Pyth only; the creator cannot set the price")]
     CreatorPriceOnPrediction,
-    #[msg("This market already has a Pyth price — the creator price override is retired")]
+    #[msg("This market already has a Pyth price, so the creator price override is retired")]
     CreatorPriceRetired,
     #[msg("Perp markets have no expiry (expiry_ts must be 0)")]
     PerpHasNoExpiry,

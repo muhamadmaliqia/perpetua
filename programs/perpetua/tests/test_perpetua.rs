@@ -168,7 +168,7 @@ fn pyth_usd(dollars: i64) -> i64 {
     dollars * 100_000_000
 }
 
-// Perp default (kind=0, expiry=0) — 6 test lama manggil ini, NOL berubah.
+// Perp default (kind=0, expiry=0), 6 test lama manggil ini, NOL berubah.
 fn ix_create_market(program_id: Pubkey, user: &Pubkey, feed: Pubkey, market: Pubkey, vault: Pubkey, price: u64, liq: u64, skew_scale: u64) -> Instruction {
     ix_create_market_kind(program_id, user, feed, market, vault, price, liq, skew_scale, perpetua::constants::MARKET_KIND_PERP, 0)
 }
@@ -196,7 +196,7 @@ fn ix_create_market_kind(program_id: Pubkey, user: &Pubkey, feed: Pubkey, market
     )
 }
 
-// F3+F2: resolve prediction market (permissionless — resolver siapa pun) dari akun harga Pyth.
+// F3+F2: resolve prediction market (permissionless, resolver siapa pun) dari akun harga Pyth.
 fn ix_resolve(program_id: Pubkey, resolver: &Pubkey, market: Pubkey, price_update: Pubkey) -> Instruction {
     Instruction::new_with_bytes(
         program_id,
@@ -210,7 +210,7 @@ fn ix_resolve(program_id: Pubkey, resolver: &Pubkey, market: Pubkey, price_updat
     )
 }
 
-// F2: dorong harga Pyth terverifikasi ke mark (permissionless — keeper siapa pun).
+// F2: dorong harga Pyth terverifikasi ke mark (permissionless, keeper siapa pun).
 fn ix_update_mark(program_id: Pubkey, cranker: &Pubkey, market: Pubkey, price_update: Pubkey) -> Instruction {
     Instruction::new_with_bytes(
         program_id,
@@ -266,7 +266,7 @@ fn test_perpetua_open_and_close_long_win() {
     let (market, vault, position) = market_pdas(&program_id, &feed, &user.pubkey());
     svm.airdrop(&user.pubkey(), 50 * SOL).unwrap();
 
-    // 1) NYALAKAN PASAR (bebas-izin) — likuiditas awal 10 SOL, harga awal $100.
+    // 1) NYALAKAN PASAR (bebas-izin), likuiditas awal 10 SOL, harga awal $100.
     send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_100, 10 * SOL, SKEW_BIG), &user);
     let m = load_market(&svm, &market);
     assert_eq!(m.authority, user.pubkey());
@@ -377,8 +377,8 @@ fn test_perpetua_liquidation_when_margin_breached() {
 }
 
 /// Demo default (DEMO.md Babak 2) PASCA-SKEW: seed 2 SOL, LONG 0.5 SOL 5x (size 2.5),
-/// skew_scale 25 SOL -> entry skew $157.50, pump +25% ke $187.50, TUTUP.
-/// PnL = 2.5*(187.5-157.5)/157.5 = ~0.476 SOL -> payout ~0.976 SOL. Vault 2.5 SOL = solvent.
+/// skew_scale 25 SOL -> entry skew $157.50, pump +25% ke $187.50, TUTUP. Harga keluar ikut skew:
+/// 187.5 * 1.05 = $196.875 -> PnL = 2.5*(196.875-157.5)/157.5 = 0.625 SOL -> payout 1.125 SOL. Vault 2.5 SOL = solvent.
 #[test]
 fn test_demo_defaults_pump_then_close() {
     let (mut svm, program_id) = setup();
@@ -411,19 +411,19 @@ fn test_demo_defaults_pump_then_close() {
     );
     send(&mut svm, ix, &user);
     let after = svm.get_account(&user.pubkey()).unwrap().lamports;
-    // CLOSE: mark $187.50 vs entry skew $157.50 -> PnL = 2.5*(187.5-157.5)/157.5 = ~0.476 SOL,
-    // payout = 0.5 + 0.476 = ~0.976 SOL (+ rent refund posisi, - fee). Solvent (vault 2.5 SOL).
+    // CLOSE: harga keluar $196.875 (mark $187.50 + premium skew 5%) vs entry $157.50 -> PnL 0.625 SOL,
+    // payout = 0.5 + 0.625 = 1.125 SOL (+ rent refund posisi, - fee). Solvent (vault 2.5 SOL).
     assert!(
-        after > before + 950_000_000 && after < before + 1_010_000_000,
+        after > before + 1_120_000_000 && after < before + 1_135_000_000,
         "payout skew nggak sesuai: before={} after={}",
         before, after
     );
     assert_eq!(load_market(&svm, &market).total_long, 0);
 }
 
-/// AUDIT 4 Okt — SELF-LIQUIDATION (demo Babak 3): di app, burner = owner DAN liquidator
+/// AUDIT 4 Okt, SELF-LIQUIDATION (demo Babak 3): di app, burner = owner DAN liquidator
 /// (frontend liquidate() ngirim owner=publicKey, liquidator=publicKey). Config ini nggak
-/// kena test lama (yg pakai 2 keypair beda) — pastiin owner==liquidator nggak bikin error.
+/// kena test lama (yg pakai 2 keypair beda), pastiin owner==liquidator nggak bikin error.
 #[test]
 fn test_demo_self_liquidation() {
     let (mut svm, program_id) = setup();
@@ -488,8 +488,38 @@ fn test_skew_premium_long_up_short_down() {
     assert_eq!(load_position(&svm, &p_s).entry_price, 142_500_000, "SHORT mestinya isi DI BAWAH oracle");
 }
 
+/// Harga keluar ikut skew (cermin harga isi): buka lalu LANGSUNG tutup di pasar sepi = IMPAS PERSIS, bukan
+/// rugi premium. LONG & SHORT 0.5 SOL 5x di depth 25 SOL: isi 5% di atas/bawah mark, keluar juga di situ
+/// -> payout = jaminan 0.5 SOL persis (+ rent akun posisi balik, - fee 1 signature).
+#[test]
+fn test_round_trip_is_flat() {
+    let (mut svm, program_id) = setup();
+    let user = Keypair::new();
+    svm.airdrop(&user.pubkey(), 50 * SOL).unwrap();
+    let rent = svm.minimum_balance_for_rent_exemption(8 + <perpetua::state::Position as anchor_lang::Space>::INIT_SPACE);
+    for is_long in [true, false] {
+        let feed = Pubkey::new_unique();
+        let (market, vault, position) = market_pdas(&program_id, &feed, &user.pubkey());
+        send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, 150_000_000, 2 * SOL, SKEW_DEMO), &user);
+        send(&mut svm, ix_open(program_id, &user.pubkey(), market, vault, position, SOL / 2, 5, is_long), &user);
+        let entry = load_position(&svm, &position).entry_price;
+        assert_eq!(entry, if is_long { 157_500_000 } else { 142_500_000 }, "isi mestinya kena premium skew 5%");
+        let before = svm.get_account(&user.pubkey()).unwrap().lamports;
+        let ix = Instruction::new_with_bytes(
+            program_id,
+            &perpetua::instruction::ClosePosition {}.data(),
+            perpetua::accounts::ClosePosition { trader: user.pubkey(), market, vault, position }.to_account_metas(None),
+        );
+        send(&mut svm, ix, &user);
+        let after = svm.get_account(&user.pubkey()).unwrap().lamports;
+        assert_eq!(after + 5_000 - before, SOL / 2 + rent, "buka-tutup instan mestinya impas (is_long={})", is_long);
+        assert_eq!(load_market(&svm, &market).total_long + load_market(&svm, &market).total_short, 0);
+    }
+}
+
 /// B2 funding velocity: pasar LONG-HEAVY -> index funding naik -> LONG BAYAR funding.
-/// PnL di-nol-in (mark = entry skew) biar efek funding keisolasi. Jam on-chain dimajuin 1 jam.
+/// PnL nol dengan sendirinya (mark nggak gerak, harga keluar = harga isi karena premium skew balik pas
+/// tutup) biar efek funding keisolasi. Jam on-chain dimajuin 1 jam.
 #[test]
 fn test_funding_long_heavy_long_pays() {
     let (mut svm, program_id) = setup();
@@ -498,12 +528,10 @@ fn test_funding_long_heavy_long_pays() {
     let (market, vault, position) = market_pdas(&program_id, &feed, &user.pubkey());
     svm.airdrop(&user.pubkey(), 50 * SOL).unwrap();
     const PRICE_150: u64 = 150_000_000;
-    const ENTRY_SKEW: u64 = 157_500_000; // fill LONG 2.5 SOL @ depth 25 SOL
 
     send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_150, 2 * SOL, SKEW_DEMO), &user);
     send(&mut svm, ix_open(program_id, &user.pubkey(), market, vault, position, SOL / 2, 5, true), &user);
-    // Nol-in PnL: mark = entry skew ($157.50) -> ekuitas = jaminan, sisanya murni funding.
-    send(&mut svm, ix_set_price(program_id, &user.pubkey(), market, ENTRY_SKEW), &user);
+    // Mark tetap $150: isi $157.50, keluar juga $157.50 (premium skew balik) -> PnL 0, sisanya murni funding.
 
     // Majuin jam on-chain +1 jam -> funding akru (skew long-heavy -> long BAYAR).
     let mut clock: Clock = svm.get_sysvar();
@@ -529,12 +557,12 @@ fn test_funding_long_heavy_long_pays() {
 /// sebelum jatuh tempo; pas expiry siapa pun (PIHAK KETIGA) boleh resolve -> kontrak BACA harga
 /// Pyth terverifikasi & kunci; abis itu harganya nggak bisa digerakin siapa pun (pembuat pasar &
 /// keeper ditolak); close settle di harga TERKUNCI; resolve kedua ditolak. Nggak ada manusia/komite
-/// yg mutusin — Pyth hakimnya.
+/// yg mutusin, Pyth hakimnya.
 #[test]
 fn test_prediction_resolves_from_pyth() {
     let (mut svm, program_id) = setup();
     let trader = Keypair::new();
-    let resolver = Keypair::new(); // PIHAK KETIGA — bukan authority/owner. Bebas-izin.
+    let resolver = Keypair::new(); // PIHAK KETIGA, bukan authority/owner. Bebas-izin.
     let feed = Pubkey::new_unique();
     let pyth = Pubkey::new_unique();
     svm.airdrop(&trader.pubkey(), 50 * SOL).unwrap();
@@ -575,7 +603,7 @@ fn test_prediction_resolves_from_pyth() {
     // RESOLVE LAGI -> DITOLAK (AlreadyResolved).
     expect_err(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market, pyth), &resolver, err_code(perpetua::error::PerpetuaError::AlreadyResolved), "resolve kedua");
 
-    // BUKTI KUNCI: abis resolve NGGAK ADA yang bisa gerakin harga — pembuat pasar ditolak (prediction
+    // BUKTI KUNCI: abis resolve NGGAK ADA yang bisa gerakin harga, pembuat pasar ditolak (prediction
     // = harga cuma dari Pyth), keeper Pyth juga ditolak (udah resolved).
     expect_err(&mut svm, ix_set_price(program_id, &trader.pubkey(), market, PRICE_100), &trader, err_code(perpetua::error::PerpetuaError::CreatorPriceOnPrediction), "override pembuat pasar abis resolve");
     expect_err(&mut svm, ix_update_mark(program_id, &resolver.pubkey(), market, pyth), &resolver, err_code(perpetua::error::PerpetuaError::AlreadyResolved), "dorong Pyth abis resolve");
@@ -605,7 +633,7 @@ fn test_prediction_resolves_from_pyth() {
 #[test]
 fn test_resolve_ignores_creator_mark() {
     let (mut svm, program_id) = setup();
-    let creator = Keypair::new(); // authority pasar SEKALIGUS trader — calon curang
+    let creator = Keypair::new(); // authority pasar SEKALIGUS trader, calon curang
     let resolver = Keypair::new();
     let feed = Pubkey::new_unique();
     let pyth = Pubkey::new_unique();
@@ -642,7 +670,7 @@ fn test_resolve_ignores_creator_mark() {
     );
 }
 
-/// Akun harga yang nggak bener HARUS ditolak — tiap penolakan dicek KODE error-nya:
+/// Akun harga yang nggak bener HARUS ditolak, tiap penolakan dicek KODE error-nya:
 /// palsu (owner bukan Pyth), feed lain, verifikasi Partial, terbit sebelum expiry, kelewat
 /// jendela, conf kelebaran. Terakhir yang bener lolos (bukti setup-nya sah).
 #[test]
@@ -695,7 +723,7 @@ fn test_resolve_rejects_bad_oracle() {
 }
 
 /// Slot pasar = (feed, jatuh tempo): satu feed bisa punya perp + BANYAK ronde prediksi. Ronde 1 resolve,
-/// ronde 2 tetep jalan & bisa dibuka posisi baru — feed nggak "mati" abis satu ronde. Perp wajib expiry 0.
+/// ronde 2 tetep jalan & bisa dibuka posisi baru, feed nggak "mati" abis satu ronde. Perp wajib expiry 0.
 #[test]
 fn test_prediction_rounds_per_feed() {
     use perpetua::error::PerpetuaError as E;
@@ -752,7 +780,7 @@ fn test_resolve_rejects_perp() {
     svm.airdrop(&user.pubkey(), 50 * SOL).unwrap();
     svm.airdrop(&resolver.pubkey(), 1 * SOL).unwrap();
 
-    // Pasar PERP biasa (kind=0, expiry=0). Akun Pyth-nya sah — yang salah jenis pasarnya.
+    // Pasar PERP biasa (kind=0, expiry=0). Akun Pyth-nya sah, yang salah jenis pasarnya.
     send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, market, vault, PRICE_100, 10 * SOL, SKEW_BIG), &user);
     let now = svm.get_sysvar::<Clock>().unix_timestamp;
     put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(100), 1_000_000, -8, now, true), perpetua::constants::PYTH_RECEIVER_PROGRAM_ID);
@@ -775,7 +803,7 @@ fn test_update_mark_from_pyth_permissionless() {
     svm.airdrop(&creator.pubkey(), 50 * SOL).unwrap();
     svm.airdrop(&keeper.pubkey(), 1 * SOL).unwrap();
     let receiver = perpetua::constants::PYTH_RECEIVER_PROGRAM_ID;
-    // Jam litesvm mulai dari 0 — pasang jam realistis biar publish_time nggak negatif.
+    // Jam litesvm mulai dari 0, pasang jam realistis biar publish_time nggak negatif.
     let t: i64 = 1_790_000_000;
     set_clock(&mut svm, t);
 

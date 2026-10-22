@@ -63,7 +63,7 @@ pub fn handle_open_position(
 
     // Skew-premium fill: harga isi = oracle * (1 + rata-rata premium sebelum&sesudah),
     // premium = skew / skew_scale, skew = total_long - total_short (bertanda). UKURAN posisi
-    // trader yang GERAKIN harga isi — nggak ada yang ngetik harga. (Nol price-impact mati di sini.)
+    // trader yang GERAKIN harga isi, nggak ada yang ngetik harga. (Nol price-impact mati di sini.)
     let oracle = ctx.accounts.market.mark_price as i128;
     let skew_scale = ctx.accounts.market.skew_scale as i128;
     let skew_before =

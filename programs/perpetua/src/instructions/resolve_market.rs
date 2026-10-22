@@ -7,9 +7,9 @@ use crate::{
     state::Market,
 };
 
-/// F3+F2: resolve prediction market — PERMISSIONLESS. Siapa pun boleh poke pas/pasca jatuh
+/// F3+F2: resolve prediction market, PERMISSIONLESS. Siapa pun boleh poke pas/pasca jatuh
 /// tempo (resolver cuma bayar fee, NOL privilege). Putusan = harga Pyth TERVERIFIKASI yang
-/// dibaca kontrak sendiri dari akun PriceUpdateV2 — bukan mark_price, jadi pembuat pasar
+/// dibaca kontrak sendiri dari akun PriceUpdateV2, bukan mark_price, jadi pembuat pasar
 /// (yang pegang set_mark_price) nggak bisa ngarang putusan. Harga wajib terbit di rentang
 /// [expiry, expiry + RESOLVE_WINDOW_SECONDS]: bukan harga lama sebelum expiry, dan nggak bisa
 /// nunggu harga enak berjam-jam.

@@ -12,7 +12,7 @@ pub struct Market {
     /// PriceUpdateV2 tiap kali harga Pyth dibaca (update_mark_from_pyth / resolve_market).
     pub oracle_feed: Pubkey,
     /// Harga acuan saat ini, 6 desimal. Diisi dari Pyth terverifikasi (update_mark_from_pyth,
-    /// bebas-izin) atau override demo authority (set_mark_price — cuma perp yg belum pernah
+    /// bebas-izin) atau override demo authority (set_mark_price, cuma perp yg belum pernah
     /// dapet harga Pyth).
     pub mark_price: u64,
     /// Total notional posisi long & short (open interest per sisi).
@@ -38,7 +38,7 @@ pub struct Market {
     /// F3: harga Pyth terverifikasi yang DIKUNCI pas resolve (6-dec). 0 sebelum resolve.
     pub resolution_price: u64,
     /// F2: publish_time harga Pyth terakhir yang masuk ke mark_price. 0 = pasar BELUM PERNAH
-    /// dapet harga Pyth (mark = harga awal / override demo) — UI cuma boleh pasang badge Pyth
+    /// dapet harga Pyth (mark = harga awal / override demo), UI cuma boleh pasang badge Pyth
     /// kalau > 0. Sekali > 0 nggak pernah balik 0 -> override pembuat pasar pensiun permanen.
     pub last_oracle_ts: i64,
     /// Bump PDA vault (kolam lamports lawan-dagang).
@@ -98,6 +98,27 @@ impl Position {
 }
 
 impl Market {
+    /// Harga KELUAR (6-dec) buat nutup posisi `size` di sisi `is_long` pada harga acuan `mark`: ikut skew,
+    /// cermin persis harga isi pas buka (open_position). Nutup long ngurangin skew, jadi premiumnya rata-rata
+    /// sebelum dan sesudah posisi dicabut. Buka lalu langsung tutup di pasar sepi = impas (premium balik).
+    pub fn exit_price(&self, mark: u64, size: u64, is_long: bool) -> Result<u64> {
+        use crate::error::PerpetuaError;
+        let one = crate::constants::PRICE_ONE as i128;
+        let scale = self.skew_scale as i128;
+        let skew_before = self.total_long as i128 - self.total_short as i128;
+        let signed = if is_long { size as i128 } else { -(size as i128) };
+        let skew_after = skew_before.checked_sub(signed).ok_or(PerpetuaError::MathOverflow)?;
+        let prem_before = skew_before.checked_mul(one).ok_or(PerpetuaError::MathOverflow)? / scale;
+        let prem_after = skew_after.checked_mul(one).ok_or(PerpetuaError::MathOverflow)? / scale;
+        let avg = (prem_before + prem_after) / 2;
+        let px = (mark as i128)
+            .checked_mul(one.checked_add(avg).ok_or(PerpetuaError::MathOverflow)?)
+            .ok_or(PerpetuaError::MathOverflow)?
+            / one;
+        require!(px > 0, PerpetuaError::InvalidPrice);
+        Ok(px as u64)
+    }
+
     /// Akru funding sampai `now` (SIP-279). Dipanggil PERTAMA tiap interaksi (open/close/
     /// liquidate) sebelum OI berubah. funding_rate geser dgn velocity sebanding skew; index
     /// naik dari rata-rata rate x selang waktu. Semua saturating (nggak boleh panik on-chain).

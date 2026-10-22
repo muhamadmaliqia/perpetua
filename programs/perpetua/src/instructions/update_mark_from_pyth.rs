@@ -7,7 +7,7 @@ use crate::{
     state::Market,
 };
 
-/// F2: dorong harga Pyth terverifikasi ke mark_price — PERMISSIONLESS. Siapa pun boleh
+/// F2: dorong harga Pyth terverifikasi ke mark_price, PERMISSIONLESS. Siapa pun boleh
 /// jadi keeper (cuma bayar fee): kontrak sendiri yang ngecek akun Pyth-nya asli, feed-nya
 /// cocok, harganya seger (<= MAX_PRICE_AGE_SECONDS), dan nggak lebih lama dari yang terakhir.
 /// Harga Pyth pertama yang masuk mensiunkan override pembuat pasar (set_mark_price) permanen.
