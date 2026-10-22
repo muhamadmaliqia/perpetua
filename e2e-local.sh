@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Perpetua — E2E LOKAL satu perintah (versi CLI, jalur client SAMA kayak frontend):
+# Perpetua: E2E LOKAL satu perintah (versi CLI, jalur client SAMA kayak frontend):
 #   1) smoke.mjs            perp: create -> LONG 5x -> +10% -> close            (delta ~ +0.75 SOL)
 #   2) e2e-predict.mjs BTC  prediction, akun Pyth ASLI di-clone dari devnet (beku) -> resolve DITOLAK
 #                           (harga terakhir terbit SEBELUM expiry = persis yg dilihat UI di localnet)

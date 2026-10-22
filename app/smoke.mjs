@@ -63,4 +63,4 @@ await program.methods
 const after = await bal()
 console.log('    balance sesudah', after, '=> delta', (after - before).toFixed(4), 'SOL (harapan ~+0.75: jaminan 0.5 + PnL 0.25)')
 
-console.log('\nSMOKE OK — jalur client frontend TERBUKTI jalan lawan program ter-deploy.')
+console.log('\nSMOKE OK, jalur client frontend TERBUKTI jalan lawan program ter-deploy.')

@@ -12,9 +12,9 @@ export const SKEW_SCALE = 25 * LAMPORTS
 // (feed = PublicKey dari byte-nya). Identitas oracle tiap pasar = feed Pyth ini.
 // Harga awal pasar = harga Pyth TERAKHIR dari akun sponsored di cluster ini (devnet: XAU/SOL/BTC/ETH; localnet:
 // di-clone demo-local.sh). `fallback` (USD) cuma kepake kalau akunnya nggak ada (US500 di devnet, localnet offline)
-// — angkanya = harga Pyth devnet 22 Okt 2026 biar nggak jauh dari dunia nyata. (Hermes digembok API-key sejak
+//, angkanya = harga Pyth devnet 22 Okt 2026 biar nggak jauh dari dunia nyata. (Hermes digembok API-key sejak
 // 26 Agu 2026 -> nggak ada keeper live; mark perp tanpa harga Pyth digerakin tombol pump/crash demo.)
-// Feed lintas kelas aset — metal (emas) + indeks saham + crypto — nunjukin "pasar leverage buat
+// Feed lintas kelas aset, metal (emas) + indeks saham + crypto, nunjukin "pasar leverage buat
 // ANGKA APA PUN": permissionless creation x feed non-crypto (yg launcher SPL nggak nyampe). id = Pyth ASLI.
 export const FEEDS = [
   { symbol: 'XAU/USD', pythId: '765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2', fallback: 4122.82 },
@@ -44,7 +44,7 @@ export function pythPriceAccount(pythId: string, shard = 0): PublicKey {
 }
 
 // Baca harga + publish_time dari data akun PriceUpdateV2 (layout sama dgn programs/perpetua/src/pyth.rs).
-// null kalau bukan verifikasi Full / data kependekan. Cuma buat tampilan — keputusan tetap di kontrak.
+// null kalau bukan verifikasi Full / data kependekan. Cuma buat tampilan, keputusan tetap di kontrak.
 export function decodePythPrice(data: Uint8Array): { price6: number; publishTime: number } | null {
   if (data.length < 41 + 60 || data[40] !== 1) return null
   const b = Buffer.from(data)

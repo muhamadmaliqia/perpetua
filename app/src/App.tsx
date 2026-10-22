@@ -7,9 +7,9 @@ import {
   feedPubkey, getProgram, marketPda, vaultPda, positionPda, pythPriceAccount, decodePythPrice,
   pick, getBurnerKeypair, makeBurnerWallet,
 } from './anchor'
-// Engine math mirrored from the program (fill, funding, liquidation) — the same file the CLI e2e checks against.
+// Engine math mirrored from the program (fill, funding, liquidation), the same file the CLI e2e checks against.
 import {
-  accrueFunding, equityAfterFunding, fillPrice, fundingOwed, liquidationPrice, maintenance, ratePctPerHour,
+  accrueFunding, equityAfterFunding, exitPrice, fillPrice, fundingOwed, liquidationPrice, maintenance, ratePctPerHour,
   skewPremium, type EngineMarket, type EnginePosition,
 } from './engine'
 
@@ -44,6 +44,16 @@ const fmtDur = (s: number) => {
 const fmtAgo = (s: number) => (s < 90 ? `${Math.max(0, Math.round(s))}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${(s / 3600).toFixed(1)}h ago`)
 const fmtClock = (unix: number) => new Date(unix * 1000).toLocaleTimeString('en-GB')
 const fmtPct = (x: number, dp = 2) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}%`
+// Sign and colour at the shown precision: a value that rounds to zero is neutral (no red "-0.000" right after
+// opening, when funding has only taken a few lamports).
+const tone = (x: number, dp: number) => {
+  const r = Number(x.toFixed(dp))
+  return r > 0 ? 'up' : r < 0 ? 'down' : ''
+}
+const signed = (x: number, dp: number) => {
+  const r = Number(x.toFixed(dp))
+  return (r > 0 ? '+' : r < 0 ? '-' : '') + Math.abs(r).toFixed(dp)
+}
 const DURATIONS = [60, 300, 3600]
 const MAX_LEVERAGE = 20 // constants.rs
 const big = (v: any): bigint => BigInt(v.toString())
@@ -67,7 +77,7 @@ const explainResolve = (e: any, pythAcct: PythAcct, now: number) => {
     return pythAcct && pythAcct !== 'missing'
       ? `Pyth hasn't published a price after expiry yet (last one ${fmtAgo(now - pythAcct.publishTime)}). Sponsored feeds update about hourly.`
       : "Pyth hasn't published a price after expiry yet."
-  if (m.includes('OracleInvalidAccount')) return 'No Pyth price account for this feed on this cluster (localnet has none — use devnet or a Hermes-posted price).'
+  if (m.includes('OracleInvalidAccount')) return 'No Pyth price account for this feed on this cluster (localnet has none: use devnet or a Hermes-posted price).'
   if (m.includes('OraclePriceTooLate')) return 'The first Pyth price after expiry was outside the 2h resolution window.'
   if (m.includes('NotExpired')) return 'Not expired yet.'
   return m
@@ -104,7 +114,7 @@ export default function App() {
   const [duration, setDuration] = useState(DURATIONS[0])
   const [chainOffset, setChainOffset] = useState(0) // detik: jam on-chain - jam lokal
   const [tick, setTick] = useState(() => Date.now())
-  // prediction rounds of the feed they were fetched for (newest expiry first) — tagged so a feed switch never
+  // prediction rounds of the feed they were fetched for (newest expiry first), tagged so a feed switch never
   // shows the previous feed's rounds
   const [predList, setPredList] = useState<{ sym: string; rounds: PredRound[] }>({ sym: '', rounds: [] })
   const [myMarkets, setMyMarkets] = useState<Set<string>>(() => new Set()) // markets where this wallet has a position
@@ -128,7 +138,7 @@ export default function App() {
   const positionKey = useMemo(() => (marketKey && publicKey ? positionPda(marketKey, publicKey) : null), [marketKey, publicKey])
 
   // Latest Pyth price per feed: starting price at ignite + display. Feeds with no account on this cluster use the
-  // reference price. (Only display — every on-chain decision reads Pyth itself.)
+  // reference price. (Only display, every on-chain decision reads Pyth itself.)
   const pythAcct: PythAcct = pythPrices[feed.symbol] ?? null
   const refPrice = (f: (typeof FEEDS)[number]) => {
     const a = pythPrices[f.symbol]
@@ -336,7 +346,7 @@ export default function App() {
       say('Airdrop received.')
       await refreshBalance()
     } catch (e: any) {
-      say('Airdrop failed (devnet rate limit — use faucet.solana.com): ' + (e?.message ?? String(e)))
+      say('Airdrop failed (devnet rate limit, use faucet.solana.com): ' + (e?.message ?? String(e)))
     }
     setBusy(false)
   }
@@ -348,7 +358,7 @@ export default function App() {
     say(pred ? 'Igniting prediction market…' : 'Igniting market…')
     try {
       // Starting price = the latest Pyth price for this feed when the cluster has its account (devnet; localnet
-      // via demo-local.sh clones), else the reference price — for perps and predictions alike.
+      // via demo-local.sh clones), else the reference price, for perps and predictions alike.
       const p6 = pyth
       let expiry = 0
       if (pred) {
@@ -372,8 +382,8 @@ export default function App() {
       setSig(s)
       say(
         pred
-          ? `Prediction market live — expires in ${fmtDur(duration)}, then anyone can resolve it from Pyth.`
-          : 'Market live — on-chain mark ready. Move the price with pump / crash (demo).',
+          ? `Prediction market live. Expires in ${fmtDur(duration)}, then anyone can resolve it from Pyth.`
+          : 'Market live. On-chain mark ready, move the price with pump / crash (demo).',
       )
       setKeeperOn(!pred)
       await refresh()
@@ -383,7 +393,7 @@ export default function App() {
     setBusy(false)
   }
 
-  // F3+F2: resolve — anyone, after expiry. The contract reads the Pyth price account itself (owner, Full
+  // F3+F2: resolve, anyone, after expiry. The contract reads the Pyth price account itself (owner, Full
   // verification, feed id, published inside [expiry, expiry+2h]) and locks it. Nobody types the price.
   const resolveMarket = async () => {
     if (!program || !publicKey || !marketKey) return
@@ -395,7 +405,7 @@ export default function App() {
         .accountsPartial({ resolver: publicKey, market: marketKey, priceUpdate: pythPriceAccount(feed.pythId) })
         .rpc()
       setSig(s)
-      say('Resolved — the contract read Pyth and locked the price. Close to settle.')
+      say('Resolved: the contract read Pyth and locked the price. Close to settle.')
       await refresh()
     } catch (e: any) {
       say('Not resolved: ' + explainResolve(e, pythAcct, chainNow))
@@ -439,7 +449,7 @@ export default function App() {
         .accountsPartial({ trader: publicKey, market: marketKey, vault: vaultKey, position: positionKey })
         .rpc()
       setSig(s)
-      say('Position closed — payout sent to your wallet.')
+      say('Position closed. Payout sent to your wallet.')
       await refresh()
     } catch (e: any) {
       say('Failed: ' + (e?.message ?? String(e)))
@@ -463,7 +473,7 @@ export default function App() {
         })
         .rpc()
       setSig(s)
-      say('Position liquidated — bounty paid.')
+      say('Position liquidated, bounty paid.')
       await refresh()
     } catch (e: any) {
       say('Failed (position may still be healthy): ' + (e?.message ?? String(e)))
@@ -475,7 +485,7 @@ export default function App() {
     if (!program || !publicKey || !position) return
     setBusy(true)
     setKeeperOn(false)
-    say('Simulating crash −25% (demo)…')
+    say('Simulating crash -25% (demo)…')
     try {
       const target = Math.round(position.entryPrice * 0.75)
       const s = await (program.methods as any)
@@ -483,7 +493,7 @@ export default function App() {
         .accountsPartial({ market: marketKey, authority: publicKey })
         .rpc()
       setSig(s)
-      say('Price crashed −25% — anyone can liquidate this position now.')
+      say('Price crashed -25%. Anyone can liquidate this position now.')
       await refresh()
     } catch (e: any) {
       say('Failed: ' + (e?.message ?? String(e)))
@@ -503,7 +513,7 @@ export default function App() {
         .accountsPartial({ market: marketKey, authority: publicKey })
         .rpc()
       setSig(s)
-      say('Price pumped +25% — PnL green, close for payout.')
+      say('Price pumped +25%. PnL green, close for payout.')
       await refresh()
     } catch (e: any) {
       say('Failed: ' + (e?.message ?? String(e)))
@@ -514,7 +524,7 @@ export default function App() {
   // A resolved prediction settles at the locked Pyth price (mirrors close_position on-chain).
   const mark = market?.resolved ? market.resolutionPrice : market?.markPrice ?? pyth ?? 0
   const pythReady = isPred && !!market && pythAcct && pythAcct !== 'missing' && pythAcct.publishTime >= market.expiryTs
-  // Funding as the program would accrue it at this second — frozen at expiry once a prediction resolves
+  // Funding as the program would accrue it at this second, frozen at expiry once a prediction resolves
   // (close_position skips accrual on a resolved market).
   const frozen = !!market && isPred && market.resolved
   const fund = market
@@ -525,19 +535,24 @@ export default function App() {
   const owedBig = position && fund ? fundingOwed(position.eng, fund.cumulativeFunding) : 0n
   const owed = Number(owedBig) // lamports: + = this position pays funding, - = it receives
   const owedTxt = (Math.abs(owed) / LAMPORTS).toFixed(6)
-  const owedShown = Number(owedTxt) > 0 // first seconds accrue only a few lamports — no "−0.000000"
+  const owedShown = Number(owedTxt) > 0 // first seconds accrue only a few lamports, no "-0.000000"
+  // Exit price = what a close settles at: a resolved prediction at its locked price, otherwise the mark adjusted by
+  // the closing order's skew premium (same rule as the fill on open), so an instant round trip is flat.
+  const exit6 = position && market && mark > 0 ? (market.resolved ? BigInt(mark) : exitPrice(market.eng, BigInt(mark), position.eng)) : 0n
+  const exitP6 = Number(exit6)
   let pnl = 0 // net of funding = what a close pays out beyond the collateral
   let equity = 0
-  if (position && fund && mark > 0 && position.entryPrice > 0) {
-    equity = Number(equityAfterFunding(position.eng, BigInt(mark), fund.cumulativeFunding))
+  if (position && fund && exit6 > 0n && position.entryPrice > 0) {
+    equity = Number(equityAfterFunding(position.eng, exit6, fund.cumulativeFunding))
     pnl = equity - position.collateral
   }
   const pnlPct = position && position.collateral > 0 ? (pnl / position.collateral) * 100 : 0
   const posLev = position ? Math.max(1, Math.round(position.size / position.collateral)) : 0
   const maint = position ? Number(maintenance(position.eng)) : 0
-  const liqP6 = position ? liquidationPrice(position.eng, owedBig) : 0
+  const liqP6 = position && market ? liquidationPrice(market.eng, position.eng, owedBig) : 0
   const healthFrac = position ? Math.max(0, Math.min(1, (equity - maint) / Math.max(1, position.collateral - maint))) : 0
-  const chgPct = position && position.entryPrice > 0 ? ((mark - position.entryPrice) / position.entryPrice) * 100 : 0
+  // move of your exit price vs your entry (0% right after opening, since the premium comes back on close)
+  const chgPct = position && position.entryPrice > 0 && exitP6 > 0 ? ((exitP6 - position.entryPrice) / position.entryPrice) * 100 : 0
 
   // Engine strip: skew (vAMM depth) + funding velocity, straight from on-chain state.
   const longOi = market?.totalLong ?? 0
@@ -545,7 +560,7 @@ export default function App() {
   const oi = longOi + shortOi
   const premPct = market ? Number(skewPremium(market.eng)) / 1e4 : 0 // 6-dec fraction -> %
   const rateH = fund ? ratePctPerHour(fund.fundingRate) : 0
-  // Order ticket: the fill the program would give this order right now — size moves the price.
+  // Order ticket: the fill the program would give this order right now, size moves the price.
   const colLam = Math.round((parseFloat(collateral) || 0) * LAMPORTS)
   const levN = parseInt(leverage) || 0
   const orderSize = colLam > 0 && levN >= 1 && levN <= MAX_LEVERAGE ? BigInt(colLam) * BigInt(levN) : 0n
@@ -555,7 +570,7 @@ export default function App() {
 
   const priceHero = () => {
     const p6 = market ? mark : pyth
-    if (p6 == null) return <>—</>
+    if (p6 == null) return <>-</>
     const { whole, cents } = priceParts(p6)
     return (
       <>
@@ -610,7 +625,7 @@ export default function App() {
       {publicKey && (
         <>
           <div className="panes">
-            {/* LEFT — markets */}
+            {/* LEFT: markets */}
             <aside className="rail-l">
               <div className="rail-label">MARKETS · {FEEDS.length}</div>
               <div className="mkt-list">
@@ -640,8 +655,8 @@ export default function App() {
                       </div>
                       <div className="r">
                         <div className="mpx">{fmtNum(p6)}</div>
-                        <div className={'mchg' + (on && position && pnl >= 0 ? ' up' : '')}>
-                          {on && position ? `${chgPct >= 0 ? '+' : ''}${chgPct.toFixed(1)}%` : '—'}
+                        <div className={'mchg' + (on && position && tone(chgPct, 1) === 'up' ? ' up' : '')}>
+                          {on && position ? `${signed(chgPct, 1)}%` : '-'}
                         </div>
                       </div>
                     </button>
@@ -665,7 +680,7 @@ export default function App() {
                 )}
                 <p>
                   {isPredView
-                    ? 'Same engine, with an expiry. Anyone can start a round; when it expires, anyone resolves it — the contract reads the Pyth price itself.'
+                    ? 'Same engine, with an expiry. Anyone can start a round; when it expires, anyone resolves it; the contract reads the Pyth price itself.'
                     : 'Permissionless. Pick a feed, ignite, trade in ten seconds.'}
                 </p>
                 <button className="btn ignite" disabled={busy || !canIgnite} onClick={createMarket}>
@@ -680,7 +695,7 @@ export default function App() {
               </div>
             </aside>
 
-            {/* CENTER — market */}
+            {/* CENTER: market */}
             <main className="main">
               <div className="main-head">
                 <span className="lbl">{feed.symbol} {isPredView ? 'prediction' : 'perpetual'}</span>
@@ -694,11 +709,10 @@ export default function App() {
                 <span className={'pxbig num' + (keeperOn ? ' live' : '')}>{priceHero()}</span>
                 {position && (
                   <div className="pxside">
-                    <div className={'chg ' + (pnl >= 0 ? 'up' : 'down')}>
-                      {chgPct >= 0 ? '+' : ''}
-                      {chgPct.toFixed(2)}%
+                    <div className={'chg ' + tone(chgPct, 2)}>
+                      {signed(chgPct, 2)}%
                     </div>
-                    <div className="chsub">FROM {fmtUsd(position.entryPrice)}</div>
+                    <div className="chsub">EXIT {fmtUsd(exitP6)} · FROM {fmtUsd(position.entryPrice)}</div>
                   </div>
                 )}
               </div>
@@ -735,7 +749,7 @@ export default function App() {
                     <>
                       <div className="k">RESOLVES IN</div>
                       <div className="v num">{fmtDur(market.expiryTs - chainNow)}</div>
-                      <div className="sub">At expiry anyone can resolve it. The contract reads the Pyth price account itself — nobody types the result in.</div>
+                      <div className="sub">At expiry anyone can resolve it. The contract reads the Pyth price account itself. Nobody types the result in.</div>
                     </>
                   ) : !market.resolved ? (
                     <>
@@ -745,7 +759,7 @@ export default function App() {
                           ? 'No Pyth price account for this feed on this cluster.'
                           : pythAcct
                           ? `Latest Pyth price ${fmtUsd(pythAcct.price6)} published ${fmtAgo(chainNow - pythAcct.publishTime)}${
-                              pythReady ? ' — after expiry, ready to resolve.' : ' — before expiry; waiting for the next Pyth update (~hourly).'
+                              pythReady ? ' (after expiry), ready to resolve.' : ' (before expiry). Waiting for the next Pyth update (~hourly).'
                             }`
                           : 'Checking Pyth…'}
                       </div>
@@ -764,7 +778,7 @@ export default function App() {
               {!market ? (
                 <div className="no-market">
                   {isPredView ? `No prediction round for ${feed.symbol} yet. Start one` : `No market for ${feed.symbol} yet. Ignite it`}{' '}
-                  from the left — permissionless, ~10 seconds, you seed 2 SOL of liquidity.
+                  from the left: permissionless, ~10 seconds, you seed 2 SOL of liquidity.
                 </div>
               ) : (
                 <>
@@ -786,7 +800,7 @@ export default function App() {
                     )}
                   </div>
 
-                  {/* Engine: skew moves the fill, funding drifts with skew (SIP-279) — live from on-chain state. */}
+                  {/* Engine: skew moves the fill, funding drifts with skew (SIP-279), live from on-chain state. */}
                   <div className="engine">
                     <div className="skewbox">
                       <div className="head">
@@ -837,13 +851,11 @@ export default function App() {
                       </div>
                       <div className="pnl">
                         <div className="k">UNREALIZED PNL</div>
-                        <div className={'big num ' + (pnl >= 0 ? 'up' : 'down')}>
-                          {pnl >= 0 ? '+' : ''}
-                          {fmtSol(pnl)}
+                        <div className={'big num ' + tone(pnl / LAMPORTS, 3)}>
+                          {signed(pnl / LAMPORTS, 3)}
                         </div>
                         <div className="sub num">
-                          SOL · {pnlPct >= 0 ? '+' : ''}
-                          {pnlPct.toFixed(1)}% on collateral
+                          SOL · {signed(pnlPct, 1)}% on collateral
                         </div>
                       </div>
                     </div>
@@ -857,10 +869,10 @@ export default function App() {
                       {market.lastOracleTs === 0 ? (
                         <>
                           <button className="btn ghost" disabled={busy} onClick={pumpPrice}>pump +25%</button>
-                          <button className="btn ghost" disabled={busy} onClick={crashPrice}>crash −25%</button>
+                          <button className="btn ghost" disabled={busy} onClick={crashPrice}>crash -25%</button>
                         </>
                       ) : (
-                        <span className="inlinelog">Price comes from Pyth — the creator override is retired on-chain.</span>
+                        <span className="inlinelog">Price comes from Pyth. The creator override is retired on-chain.</span>
                       )}
                     </div>
                   )}
@@ -868,7 +880,7 @@ export default function App() {
               )}
             </main>
 
-            {/* RIGHT — order / manage */}
+            {/* RIGHT: order / manage */}
             <aside className="rail-r">
               {!position ? (
                 <>
@@ -916,11 +928,12 @@ export default function App() {
                     <div className="row"><span className="k">Size</span><span className="v num">{fmtSol(position.size)} SOL</span></div>
                     <div className="row"><span className="k">Entry</span><span className="v num">{fmtUsd(position.entryPrice)}</span></div>
                     <div className="row"><span className="k">Mark</span><span className="v num">{fmtUsd(mark)}</span></div>
+                    <div className="row"><span className="k">Exit price</span><span className="v num">{fmtUsd(exitP6)}</span></div>
                     <div className="row"><span className="k">Liq price</span><span className="v num down">{fmtUsd(liqP6)}</span></div>
                     <div className="row">
                       <span className="k">Funding</span>
                       <span className={'v num' + (owedShown && owed > 0 ? ' down' : owedShown && owed < 0 ? ' up' : '')}>
-                        {owedShown ? (owed > 0 ? '−' : '+') : ''}
+                        {owedShown ? (owed > 0 ? '-' : '+') : ''}
                         {owedTxt} SOL
                       </span>
                     </div>

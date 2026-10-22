@@ -1,7 +1,7 @@
 /* ============================================================
-   PERPETUA — src/index.css
+   PERPETUA, src/index.css
    Three-pane trading terminal. Fonts bundled via @fontsource
-   (imported in main.tsx) — no network dependency.
+   (imported in main.tsx), no network dependency.
    Visual language matched to hackathons.solana.com:
    Geist, flat accents (no gradients), mono tabular figures,
    uppercase tracked labels, hairline separators, a blinking caret.

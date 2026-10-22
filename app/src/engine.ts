@@ -1,7 +1,7 @@
-// Perpetua engine math — a line-for-line mirror of the on-chain program (programs/perpetua/src:
-// open_position.rs fill · state.rs accrue_funding / funding_owed / unrealized_pnl · liquidate_position.rs
-// maintenance). BigInt division truncates toward zero exactly like Rust's i128, so the UI and the CLI
-// e2e (app/e2e-engine.mjs) predict the on-chain numbers to the lamport. Pure: no imports, no I/O.
+// Perpetua engine math: a line-for-line mirror of the on-chain program (programs/perpetua/src:
+// open_position.rs fill · state.rs exit_price / accrue_funding / funding_owed / unrealized_pnl ·
+// liquidate_position.rs maintenance). BigInt division truncates toward zero exactly like Rust's i128, so the UI
+// and the CLI e2e (app/e2e-engine.mjs) predict the on-chain numbers to the lamport. Pure: no imports, no I/O.
 // (The program uses saturating math; at these magnitudes it never saturates, so plain BigInt matches.)
 
 export const PRICE_ONE = 1_000_000n // 6-decimal prices / fractions (1_000_000 = 1.0)
@@ -72,24 +72,37 @@ export function unrealizedPnl(p: EnginePosition, mark: bigint): bigint {
   return p.isLong ? raw : -raw
 }
 
-/** Equity after funding, exactly as close_position / liquidate_position compute it. */
-export const equityAfterFunding = (p: EnginePosition, mark: bigint, cumulativeFunding: bigint): bigint =>
-  p.collateral + unrealizedPnl(p, mark) - fundingOwed(p, cumulativeFunding)
+/** Average skew premium (6-dec fraction) for closing `p` now: skew before vs after removing it (Market::exit_price). */
+export function exitPremium(m: EngineMarket, p: EnginePosition): bigint {
+  const before = skew(m)
+  const after = before - (p.isLong ? p.size : -p.size)
+  return ((before * PRICE_ONE) / m.skewScale + (after * PRICE_ONE) / m.skewScale) / 2n
+}
 
-/** What close_position pays out: max(0, equity after funding). */
-export function closePayout(p: EnginePosition, mark: bigint, cumulativeFunding: bigint): bigint {
-  const e = equityAfterFunding(p, mark, cumulativeFunding)
+/** Exit price for close_position / liquidate_position: the mark adjusted by the closing order's skew premium, the same
+ *  rule as the fill on open, so an instant round trip in a quiet market is flat. */
+export const exitPrice = (m: EngineMarket, mark: bigint, p: EnginePosition): bigint =>
+  (mark * (PRICE_ONE + exitPremium(m, p))) / PRICE_ONE
+
+/** Equity after funding at an exit price, exactly as close_position / liquidate_position compute it. */
+export const equityAfterFunding = (p: EnginePosition, exit: bigint, cumulativeFunding: bigint): bigint =>
+  p.collateral + unrealizedPnl(p, exit) - fundingOwed(p, cumulativeFunding)
+
+/** What close_position pays out at an exit price: max(0, equity after funding). */
+export function closePayout(p: EnginePosition, exit: bigint, cumulativeFunding: bigint): bigint {
+  const e = equityAfterFunding(p, exit, cumulativeFunding)
   return e > 0n ? e : 0n
 }
 
 /** Maintenance margin (lamports): the position is liquidatable once equity <= this. */
 export const maintenance = (p: EnginePosition): bigint => (p.size * MAINTENANCE_MARGIN_BPS) / BPS
 
-/** Mark (6-dec) at which equity after `owed` funding hits maintenance — the liquidation price. */
-export function liquidationPrice(p: EnginePosition, owed: bigint): number {
+/** Mark (6-dec) at which equity after `owed` funding hits maintenance, valuing the position at its exit price. */
+export function liquidationPrice(m: EngineMarket, p: EnginePosition, owed: bigint): number {
   const e = Number(p.entryPrice)
   const k = Number(maintenance(p) - p.collateral + owed) / Number(p.size)
-  return Math.max(0, Math.round(p.isLong ? e * (1 + k) : e * (1 - k)))
+  const exitAtLiq = p.isLong ? e * (1 + k) : e * (1 - k)
+  return Math.max(0, Math.round(exitAtLiq / (1 + Number(exitPremium(m, p)) / 1e6)))
 }
 
 /** funding_rate (FUNDING_SCALE per second) as percent per hour. */

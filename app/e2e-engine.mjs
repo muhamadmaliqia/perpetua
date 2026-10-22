@@ -1,5 +1,5 @@
 // E2E ENGINE lawan validator lokal: angka yang DITAMPILIN UI harus SAMA PERSIS (ke lamport) sama angka on-chain.
-// Rumusnya diambil dari src/engine.ts — file yang SAMA yang dipakai App.tsx (Est. fill, funding, equity, liq price).
+// Rumusnya diambil dari src/engine.ts, file yang SAMA yang dipakai App.tsx (Est. fill, funding, equity, liq price).
 //   Babak panggung (DEMO.md, angka App.tsx): XAU @ harga Pyth (clone) · seed 2 SOL · depth 25 SOL · LONG 0.5 SOL 5x ·
 //     pump +25% dari entry · close · buka lagi · crash -25% · likuidasi sendiri.
 //   Dua sisi: trader kedua SHORT ke pasar long-heavy · funding dua arah · batas harga likuidasi (±0.2%).
@@ -105,16 +105,21 @@ const xauStart = xauAcct
 console.log(`[A1] create_market XAU/USD perp @ $${Number(xauStart) / 1e6} (${xauAcct ? 'Pyth price, cloned from devnet' : 'reference price'}) · seed 2 SOL · depth 25 SOL`)
 await create(xau, xauStart)
 
-console.log('[A2] LONG 0.5 SOL 5x — "Est. fill" di order ticket vs entry on-chain')
+console.log('[A2] LONG 0.5 SOL 5x, "Est. fill" di order ticket vs entry on-chain')
 const est1 = E.fillPrice(await readMarket(xau.market), HALF * 5n, true)
 await open(xau, kp, HALF, 5, true)
 const posA = positionOf(xau.market, kp.publicKey)
 const a1 = await readPosition(posA)
 same('entry LONG 2.5 SOL (fill premium +5%)', a1.entryPrice, est1)
+// What the UI shows right after opening: closing now pays the collateral back exactly (the premium returns on exit).
+const mOpen1 = await readMarket(xau.market)
+const eqOpen1 = E.equityAfterFunding(a1, E.exitPrice(mOpen1, mOpen1.markPrice, a1), mOpen1.cumulativeFunding)
+if (eqOpen1 !== HALF) fail(`equity right after open mestinya = jaminan ${HALF}, dapet ${eqOpen1}`)
+console.log(`    = equity right after open: ${eqOpen1} (= jaminan, PnL 0, nggak merah)`)
 
 await sleep(4000) // biar funding sempet jalan (pasar long-heavy -> long bayar)
 const pump = (a1.entryPrice * 125n) / 100n // = tombol "pump +25%" (App.tsx: entry * 1.25)
-console.log(`[A3] pump +25% -> $${Number(pump) / 1e6}, lalu CLOSE — payout on-chain vs equity UI (PnL - funding)`)
+console.log(`[A3] pump +25% -> $${Number(pump) / 1e6}, lalu CLOSE, payout on-chain vs equity UI (PnL - funding)`)
 await setMark(xau, pump)
 const xPre = await readMarket(xau.market)
 const sigClose = await close(xau, kp)
@@ -124,24 +129,28 @@ same('funding index pas close', xPost.cumulativeFunding, acc.cumulativeFunding)
 same('funding rate pas close', xPost.fundingRate, acc.fundingRate)
 const owed1 = E.fundingOwed(a1, xPost.cumulativeFunding)
 if (owed1 <= 0n) fail(`LONG di pasar long-heavy mestinya BAYAR funding, owed=${owed1}`)
-const payout1 = logNum(await programLog(sigClose, 'Position closed:'), 'payout')
-same('payout close', payout1, E.closePayout(a1, pump, xPost.cumulativeFunding))
+const closeLine = await programLog(sigClose, 'Position closed:')
+const exit1 = E.exitPrice(xPre, pump, a1)
+same('exit price pas close (mark + premium skew)', logNum(closeLine, 'exit'), exit1)
+const payout1 = logNum(closeLine, 'payout')
+same('payout close', payout1, E.closePayout(a1, exit1, xPost.cumulativeFunding))
 console.log(`    payout ${(Number(payout1) / 1e9).toFixed(6)} SOL · funding dibayar ${owed1} lamports`)
 
-console.log('[A4] buka lagi LONG 0.5 SOL 5x, crash -25% dari entry, LIKUIDASI — liq price UI vs program')
+console.log('[A4] buka lagi LONG 0.5 SOL 5x, crash -25% dari entry, LIKUIDASI, liq price UI vs program')
 const est2 = E.fillPrice(await readMarket(xau.market), HALF * 5n, true)
 await open(xau, kp, HALF, 5, true)
 const a2 = await readPosition(posA)
 same('entry LONG ke-2', a2.entryPrice, est2)
 const crash = (a2.entryPrice * 75n) / 100n // = tombol "crash -25%"
-const liqUi = E.liquidationPrice(a2, 0n)
+const liqUi = E.liquidationPrice(await readMarket(xau.market), a2, 0n)
 console.log(`    liq price UI $${liqUi / 1e6} · crash ke $${Number(crash) / 1e6} (di bawah liq -> mesti kelikuidasi)`)
 if (Number(crash) >= liqUi) fail('crash -25% mestinya di bawah liq price 5x')
 await setMark(xau, crash)
+const xPreLiq = await readMarket(xau.market)
 const sigLiq = await liquidate(xau, kp.publicKey)
 const xLiq = await readMarket(xau.market)
 const liqLine = await programLog(sigLiq, 'LIQUIDATION:')
-same('equity pas likuidasi', logNum(liqLine, 'equity'), E.equityAfterFunding(a2, crash, xLiq.cumulativeFunding))
+same('equity pas likuidasi', logNum(liqLine, 'equity'), E.equityAfterFunding(a2, E.exitPrice(xPreLiq, crash, a2), xLiq.cumulativeFunding))
 same('bounty likuidator (1% notional)', logNum(liqLine, 'bounty'), (a2.size * 100n) / 10_000n)
 
 // ━━ B. DUA SISI: SHORT ke pasar long-heavy · funding dua arah · batas harga likuidasi ━━
@@ -162,9 +171,10 @@ await sleep(3000)
 console.log('[B2] batas likuidasi SHORT B: mark 0.2% di bawah liq price UI -> sehat, 0.2% di atas -> kelikuidasi')
 // Persis cara UI: akru funding sampai jam on-chain SEKARANG, baru hitung liq price.
 const chainNow = BigInt(await conn.getBlockTime(await conn.getSlot('confirmed')))
-const owedB = E.fundingOwed(b, E.accrueFunding(await readMarket(us.market), chainNow).cumulativeFunding)
+const uNowM = await readMarket(us.market)
+const owedB = E.fundingOwed(b, E.accrueFunding(uNowM, chainNow).cumulativeFunding)
 if (owedB >= 0n) fail(`SHORT di pasar long-heavy mestinya NERIMA funding, owed=${owedB}`)
-const liqB = E.liquidationPrice(b, owedB)
+const liqB = E.liquidationPrice(uNowM, b, owedB)
 console.log(`    liq price UI SHORT B $${liqB / 1e6} (funding diterima ${-owedB} lamports)`)
 await setMark(us, BigInt(Math.round(liqB * 0.998)))
 let healthyErr = null
@@ -177,16 +187,17 @@ if (!healthyErr?.includes('PositionHealthy')) fail('0.2% sebelum liq price mesti
 console.log('    = 0.2% sebelum liq price: DITOLAK PositionHealthy')
 const markLiq = BigInt(Math.round(liqB * 1.002))
 await setMark(us, markLiq)
+const uPreLiqB = await readMarket(us.market)
 const sigLiqB = await liquidate(us, traderB.publicKey)
 const uLiq = await readMarket(us.market)
-same('equity SHORT B pas likuidasi', logNum(await programLog(sigLiqB, 'LIQUIDATION:'), 'equity'), E.equityAfterFunding(b, markLiq, uLiq.cumulativeFunding))
+same('equity SHORT B pas likuidasi', logNum(await programLog(sigLiqB, 'LIQUIDATION:'), 'equity'), E.equityAfterFunding(b, E.exitPrice(uPreLiqB, markLiq, b), uLiq.cumulativeFunding))
 
-console.log('[B3] CLOSE A (LONG) — payout on-chain vs engine, funding ngikut skew yang berubah')
+console.log('[B3] CLOSE A (LONG), payout on-chain vs engine, funding ngikut skew yang berubah')
 const aUs = await readPosition(positionOf(us.market, kp.publicKey))
 const uPre = await readMarket(us.market)
 const sigCloseA = await close(us, kp)
 const uPost = await readMarket(us.market)
 same('funding index pas close A', uPost.cumulativeFunding, E.accrueFunding(uPre, uPost.lastFundingTs).cumulativeFunding)
-same('payout close A', logNum(await programLog(sigCloseA, 'Position closed:'), 'payout'), E.closePayout(aUs, markLiq, uPost.cumulativeFunding))
+same('payout close A', logNum(await programLog(sigCloseA, 'Position closed:'), 'payout'), E.closePayout(aUs, E.exitPrice(uPre, markLiq, aUs), uPost.cumulativeFunding))
 
-console.log('\nE2E OK (engine) — fill, funding, payout, likuidasi: angka UI == angka on-chain.')
+console.log('\nE2E OK (engine), fill, funding, payout, likuidasi: angka UI == angka on-chain.')

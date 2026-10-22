@@ -93,7 +93,7 @@ if (expect === 'awaiting') {
   if (!resolveErr?.includes('OraclePriceBeforeExpiry')) fail('mestinya ditolak OraclePriceBeforeExpiry, dapet: ' + (resolveErr ?? 'SUKSES'))
   if (m.resolved) fail('market nggak boleh resolved')
   console.log('    DITOLAK sesuai harapan: OraclePriceBeforeExpiry (harga Pyth di akun terbit sebelum expiry)')
-  console.log('\nE2E OK (awaiting) — kontrak nolak harga Pyth yang terbit sebelum expiry.')
+  console.log('\nE2E OK (awaiting), kontrak nolak harga Pyth yang terbit sebelum expiry.')
   process.exit(0)
 }
 
@@ -109,4 +109,4 @@ const delta = (await bal()) - before
 const expected = 0.5 + (2.5 * (res6 - entry)) / entry
 console.log(`    delta ${delta.toFixed(4)} SOL (harapan ~${expected.toFixed(4)} = jaminan 0.5 + PnL, + refund rent posisi - fee)`)
 if (Math.abs(delta - expected) > 0.01) fail('payout nggak sesuai harga resolusi')
-console.log('\nE2E OK (resolved) — resolve baca Pyth on-chain, close settle di harga terkunci.')
+console.log('\nE2E OK (resolved), resolve baca Pyth on-chain, close settle di harga terkunci.')
