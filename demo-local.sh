@@ -20,9 +20,8 @@ anchor deploy --provider.cluster localnet
 echo ""
 echo "✅ Program ke-deploy di localnet."
 echo "   1) terminal lain:  cd app && npm run dev"
-echo "   2) buka browser:   http://localhost:5173?rpc=$RPC"
-echo "   3) di Phantom:     tambah custom RPC $RPC (Settings > Developer),"
-echo "                      lalu klik tombol 'airdrop 2◎' di app buat isi saldo lokal."
+echo "   2) buka browser:   http://localhost:5173/?rpc=$RPC"
+echo "      wallet lokal = burner otomatis (saldo 5 SOL diisi sendiri) — nggak perlu Phantom/faucet."
 echo ""
 echo "Validator jalan (PID $VPID). Ctrl-C buat berhenti."
 wait $VPID
