@@ -17,7 +17,7 @@ pub struct UpdateMarkFromPyth<'info> {
     pub cranker: Signer<'info>,
     #[account(
         mut,
-        seeds = [MARKET_SEED, market.oracle_feed.as_ref()],
+        seeds = [MARKET_SEED, market.oracle_feed.as_ref(), market.expiry_ts.to_le_bytes().as_ref()],
         bump = market.bump,
     )]
     pub market: Account<'info, Market>,

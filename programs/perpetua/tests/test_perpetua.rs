@@ -41,9 +41,17 @@ fn send(svm: &mut LiteSVM, ix: Instruction, payer: &Keypair) {
     assert!(res.is_ok(), "tx gagal: {:?}", res.err());
 }
 
+// Perp: slot (feed, expiry 0).
 fn market_pdas(program_id: &Pubkey, feed: &Pubkey, user: &Pubkey) -> (Pubkey, Pubkey, Pubkey) {
-    let (market, _) =
-        Pubkey::find_program_address(&[perpetua::constants::MARKET_SEED, feed.as_ref()], program_id);
+    market_pdas_exp(program_id, feed, user, 0)
+}
+
+// Slot pasar = ["market", feed, expiry_ts i64 LE]: perp = expiry 0, prediction = jatuh temponya.
+fn market_pdas_exp(program_id: &Pubkey, feed: &Pubkey, user: &Pubkey, expiry_ts: i64) -> (Pubkey, Pubkey, Pubkey) {
+    let (market, _) = Pubkey::find_program_address(
+        &[perpetua::constants::MARKET_SEED, feed.as_ref(), &expiry_ts.to_le_bytes()],
+        program_id,
+    );
     let (vault, _) = Pubkey::find_program_address(
         &[perpetua::constants::VAULT_SEED, market.as_ref()],
         program_id,
@@ -529,13 +537,13 @@ fn test_prediction_resolves_from_pyth() {
     let resolver = Keypair::new(); // PIHAK KETIGA — bukan authority/owner. Bebas-izin.
     let feed = Pubkey::new_unique();
     let pyth = Pubkey::new_unique();
-    let (market, vault, position) = market_pdas(&program_id, &feed, &trader.pubkey());
     svm.airdrop(&trader.pubkey(), 50 * SOL).unwrap();
     svm.airdrop(&resolver.pubkey(), 1 * SOL).unwrap();
 
     const PRICE_180: u64 = 180_000_000; // +20%: harga Pyth pas expiry
     let clock: Clock = svm.get_sysvar();
     let expiry = clock.unix_timestamp + 3600; // jatuh tempo 1 jam lagi
+    let (market, vault, position) = market_pdas_exp(&program_id, &feed, &trader.pubkey(), expiry);
 
     // IGNITE prediction market (kind=1, expiry 1 jam): harga $100, likuiditas 20 SOL, depth raksasa.
     send(&mut svm, ix_create_market_kind(program_id, &trader.pubkey(), feed, market, vault, PRICE_100, 20 * SOL, SKEW_BIG, perpetua::constants::MARKET_KIND_PREDICTION, expiry), &trader);
@@ -601,11 +609,11 @@ fn test_resolve_ignores_creator_mark() {
     let resolver = Keypair::new();
     let feed = Pubkey::new_unique();
     let pyth = Pubkey::new_unique();
-    let (market, vault, position) = market_pdas(&program_id, &feed, &creator.pubkey());
     svm.airdrop(&creator.pubkey(), 50 * SOL).unwrap();
     svm.airdrop(&resolver.pubkey(), 1 * SOL).unwrap();
 
     let expiry = svm.get_sysvar::<Clock>().unix_timestamp + 3600;
+    let (market, vault, position) = market_pdas_exp(&program_id, &feed, &creator.pubkey(), expiry);
     send(&mut svm, ix_create_market_kind(program_id, &creator.pubkey(), feed, market, vault, PRICE_100, 20 * SOL, SKEW_BIG, perpetua::constants::MARKET_KIND_PREDICTION, expiry), &creator);
     send(&mut svm, ix_open(program_id, &creator.pubkey(), market, vault, position, 2 * SOL, 5, true), &creator);
 
@@ -646,11 +654,11 @@ fn test_resolve_rejects_bad_oracle() {
     let feed = Pubkey::new_unique();
     let other_feed = Pubkey::new_unique();
     let pyth = Pubkey::new_unique();
-    let (market, vault, _position) = market_pdas(&program_id, &feed, &creator.pubkey());
     svm.airdrop(&creator.pubkey(), 50 * SOL).unwrap();
     svm.airdrop(&resolver.pubkey(), 1 * SOL).unwrap();
 
     let expiry = svm.get_sysvar::<Clock>().unix_timestamp + 3600;
+    let (market, vault, _position) = market_pdas_exp(&program_id, &feed, &creator.pubkey(), expiry);
     send(&mut svm, ix_create_market_kind(program_id, &creator.pubkey(), feed, market, vault, PRICE_100, 20 * SOL, SKEW_BIG, perpetua::constants::MARKET_KIND_PREDICTION, expiry), &creator);
     set_clock(&mut svm, expiry + 10);
 
@@ -684,6 +692,52 @@ fn test_resolve_rejects_bad_oracle() {
     svm.expire_blockhash();
     send(&mut svm, resolve(pyth), &resolver);
     assert_eq!(load_market(&svm, &market).resolution_price, 150_000_000);
+}
+
+/// Slot pasar = (feed, jatuh tempo): satu feed bisa punya perp + BANYAK ronde prediksi. Ronde 1 resolve,
+/// ronde 2 tetep jalan & bisa dibuka posisi baru — feed nggak "mati" abis satu ronde. Perp wajib expiry 0.
+#[test]
+fn test_prediction_rounds_per_feed() {
+    use perpetua::error::PerpetuaError as E;
+    let (mut svm, program_id) = setup();
+    let user = Keypair::new();
+    let feed = Pubkey::new_unique();
+    let pyth = Pubkey::new_unique();
+    svm.airdrop(&user.pubkey(), 100 * SOL).unwrap();
+    let now = svm.get_sysvar::<Clock>().unix_timestamp;
+    let (e1, e2) = (now + 60, now + 3600);
+    let kind = perpetua::constants::MARKET_KIND_PREDICTION;
+
+    // Perp + 2 ronde prediksi di feed yang SAMA -> 3 alamat beda, semua sah.
+    let (mp, vp, _pp) = market_pdas(&program_id, &feed, &user.pubkey());
+    let (m1, v1, p1) = market_pdas_exp(&program_id, &feed, &user.pubkey(), e1);
+    let (m2, v2, p2) = market_pdas_exp(&program_id, &feed, &user.pubkey(), e2);
+    assert!(mp != m1 && m1 != m2 && mp != m2, "tiap slot mestinya alamat beda");
+    send(&mut svm, ix_create_market(program_id, &user.pubkey(), feed, mp, vp, PRICE_100, 2 * SOL, SKEW_BIG), &user);
+    send(&mut svm, ix_create_market_kind(program_id, &user.pubkey(), feed, m1, v1, PRICE_100, 5 * SOL, SKEW_BIG, kind, e1), &user);
+    send(&mut svm, ix_create_market_kind(program_id, &user.pubkey(), feed, m2, v2, PRICE_100, 5 * SOL, SKEW_BIG, kind, e2), &user);
+    assert_eq!(load_market(&svm, &m1).expiry_ts, e1);
+    assert_eq!(load_market(&svm, &m2).expiry_ts, e2);
+    assert_eq!(load_market(&svm, &mp).expiry_ts, 0);
+
+    // Perp ber-expiry -> ditolak (expiry = seed alamat, perp harus 0).
+    let other = Pubkey::new_unique();
+    let (mx, vx, _) = market_pdas_exp(&program_id, &other, &user.pubkey(), e1);
+    expect_err(&mut svm, ix_create_market_kind(program_id, &user.pubkey(), other, mx, vx, PRICE_100, SOL, SKEW_BIG, perpetua::constants::MARKET_KIND_PERP, e1), &user, err_code(E::PerpHasNoExpiry), "perp ber-expiry");
+
+    // Ronde 1: buka posisi, jatuh tempo, Pyth $120 -> resolve.
+    send(&mut svm, ix_open(program_id, &user.pubkey(), m1, v1, p1, SOL, 2, true), &user);
+    set_clock(&mut svm, e1 + 10);
+    put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(120), 1_000_000, -8, e1 + 5, true), perpetua::constants::PYTH_RECEIVER_PROGRAM_ID);
+    send(&mut svm, ix_resolve(program_id, &user.pubkey(), m1, pyth), &user);
+    assert!(load_market(&svm, &m1).resolved);
+    assert_eq!(load_market(&svm, &m1).resolution_price, 120_000_000);
+
+    // Ronde 2 di feed yang sama tetep hidup: posisi baru masuk, resolve ditolak sebelum jatuh tempo.
+    assert!(!load_market(&svm, &m2).resolved);
+    send(&mut svm, ix_open(program_id, &user.pubkey(), m2, v2, p2, SOL, 2, false), &user);
+    assert_eq!(load_position(&svm, &p2).collateral, SOL);
+    expect_err(&mut svm, ix_resolve(program_id, &user.pubkey(), m2, pyth), &user, err_code(E::NotExpired), "ronde 2 belum jatuh tempo");
 }
 
 /// F3: resolve HANYA buat prediction market. Perp (kind=0) ditolak (NotPredictionMarket).

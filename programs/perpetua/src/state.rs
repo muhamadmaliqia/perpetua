@@ -1,7 +1,8 @@
 use anchor_lang::prelude::*;
 
 /// Satu pasar leverage di atas satu feed harga. Dibuat bebas-izin: siapa pun
-/// bisa "menyalakan" pasar untuk sebuah feed yang belum ada.
+/// bisa "menyalakan" pasar. PDA = ["market", oracle_feed, expiry_ts (i64 LE)]: perp (expiry 0)
+/// satu per feed; prediction satu per (feed, jatuh tempo) -> ronde baru bisa terus dinyalain.
 #[account]
 #[derive(InitSpace)]
 pub struct Market {

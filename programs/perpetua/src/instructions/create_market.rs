@@ -8,15 +8,24 @@ use crate::{
 };
 
 #[derive(Accounts)]
-#[instruction(oracle_feed: Pubkey)]
+#[instruction(
+    oracle_feed: Pubkey,
+    initial_price: u64,
+    initial_liquidity: u64,
+    skew_scale: u64,
+    market_kind: u8,
+    expiry_ts: i64
+)]
 pub struct CreateMarket<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
+    /// Slot pasar = (feed, jatuh tempo). Perp (expiry 0) satu per feed; prediction satu per
+    /// (feed, jatuh tempo) -> ronde prediksi baru bisa dinyalain terus buat feed yang sama.
     #[account(
         init,
         payer = authority,
         space = 8 + Market::INIT_SPACE,
-        seeds = [MARKET_SEED, oracle_feed.as_ref()],
+        seeds = [MARKET_SEED, oracle_feed.as_ref(), expiry_ts.to_le_bytes().as_ref()],
         bump
     )]
     pub market: Account<'info, Market>,
@@ -48,11 +57,13 @@ pub fn handle_create_market(
     );
 
     let now = Clock::get()?.unix_timestamp;
-    // Perp: expiry dipaksa 0 (perpetual). Prediction: wajib jatuh tempo di masa depan.
+    // Prediction: wajib jatuh tempo di masa depan. Perp: wajib 0 — expiry ikut jadi seed PDA, jadi
+    // nilai yang disimpen harus sama persis sama yang dipake nurunin alamat (dulu dipaksa 0 diem-diem).
     let expiry = if market_kind == MARKET_KIND_PREDICTION {
         require!(expiry_ts > now, PerpetuaError::InvalidExpiry);
         expiry_ts
     } else {
+        require!(expiry_ts == 0, PerpetuaError::PerpHasNoExpiry);
         0
     };
 

@@ -48,4 +48,6 @@ pub enum PerpetuaError {
     CreatorPriceOnPrediction,
     #[msg("This market already has a Pyth price — the creator price override is retired")]
     CreatorPriceRetired,
+    #[msg("Perp markets have no expiry (expiry_ts must be 0)")]
+    PerpHasNoExpiry,
 }

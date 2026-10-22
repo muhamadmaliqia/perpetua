@@ -11,7 +11,7 @@ use crate::{constants::*, error::PerpetuaError, state::Market};
 pub struct SetMarkPrice<'info> {
     #[account(
         mut,
-        seeds = [MARKET_SEED, market.oracle_feed.as_ref()],
+        seeds = [MARKET_SEED, market.oracle_feed.as_ref(), market.expiry_ts.to_le_bytes().as_ref()],
         bump = market.bump,
         has_one = authority @ PerpetuaError::Unauthorized,
     )]
