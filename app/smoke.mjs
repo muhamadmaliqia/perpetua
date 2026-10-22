@@ -18,7 +18,8 @@ const program = new Program(idl, provider)
 const PID = new PublicKey(idl.address)
 
 const feed = new PublicKey(Buffer.from(PYTH_SOL, 'hex'))
-const market = PublicKey.findProgramAddressSync([Buffer.from('market'), feed.toBuffer()], PID)[0]
+// Slot pasar = ["market", feed, expiry i64 LE]; perp = expiry 0 -> 8 byte nol.
+const market = PublicKey.findProgramAddressSync([Buffer.from('market'), feed.toBuffer(), Buffer.alloc(8)], PID)[0]
 const vault = PublicKey.findProgramAddressSync([Buffer.from('vault'), market.toBuffer()], PID)[0]
 const position = PublicKey.findProgramAddressSync(
   [Buffer.from('position'), market.toBuffer(), kp.publicKey.toBuffer()],

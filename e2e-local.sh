@@ -17,13 +17,14 @@ RPC=http://127.0.0.1:8899
 BTC=e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43
 ETH=ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace
 BTC_PYTH=4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9VPSPo # akun sponsored BTC/USD di devnet (owner Pyth Receiver)
+XAU_PYTH=2uPQGpm8X4ZkxMHxrAW1QuhXcse1AHEgPih6Xp9NuEWW # akun sponsored XAU/USD di devnet -> harga awal e2e-engine
 
 echo "▶ Fixture Pyth SINTETIS buat ETH (terbit 15 menit dari sekarang)…"
 ETH_PYTH=$(cd app && node e2e-pyth-fixture.mjs "$ETH" 3500 900 /tmp/perpetua-e2e-eth.json | cut -d' ' -f1)
 
 echo "▶ Validator lokal (clone BTC asli dari devnet + fixture ETH)…"
 solana-test-validator --ledger /tmp/perpetua-e2e-ledger --reset \
-  --url https://api.devnet.solana.com --clone "$BTC_PYTH" \
+  --url https://api.devnet.solana.com --clone "$BTC_PYTH" --clone "$XAU_PYTH" \
   --account "$ETH_PYTH" /tmp/perpetua-e2e-eth.json \
   >/tmp/perpetua-e2e-validator.log 2>&1 &
 VPID=$!

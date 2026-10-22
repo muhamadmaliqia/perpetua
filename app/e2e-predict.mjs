@@ -21,9 +21,12 @@ const PID = new PublicKey(idl.address)
 
 const feed = new PublicKey(Buffer.from(feedHex, 'hex'))
 const pda = (seeds) => PublicKey.findProgramAddressSync(seeds, PID)[0]
-const market = pda([Buffer.from('market'), feed.toBuffer()])
-const vault = pda([Buffer.from('vault'), market.toBuffer()])
-const position = pda([Buffer.from('position'), market.toBuffer(), kp.publicKey.toBuffer()])
+// Slot pasar = ["market", feed, expiry i64 LE] -> alamat baru dihitung setelah expiry ketauan (di bawah).
+const i64 = (n) => {
+  const b = Buffer.alloc(8)
+  b.writeBigInt64LE(BigInt(n))
+  return b
+}
 // Akun harga Pyth sponsored = PDA push-oracle [shard 0 u16 LE, feed_id] (sama dgn anchor.ts pythPriceAccount).
 const priceUpdate = PublicKey.findProgramAddressSync(
   [Buffer.alloc(2), Buffer.from(feedHex, 'hex')],
@@ -43,6 +46,9 @@ const pyAcc = await conn.getAccountInfo(priceUpdate)
 console.log(`feed ${feedHex.slice(0, 8)}… | akun Pyth ${priceUpdate.toBase58()} ${pyAcc ? 'ADA (owner ' + pyAcc.owner.toBase58().slice(0, 8) + '…)' : 'TIDAK ADA'}`)
 
 const expiry = (await chainNow()) + EXPIRY_IN
+const market = pda([Buffer.from('market'), feed.toBuffer(), i64(expiry)])
+const vault = pda([Buffer.from('vault'), market.toBuffer()])
+const position = pda([Buffer.from('position'), market.toBuffer(), kp.publicKey.toBuffer()])
 console.log(`[1] create_market PREDICTION @ $${startUsd}, expiry +${EXPIRY_IN}s (${expiry})`)
 await program.methods
   .createMarket(feed, usd6(startUsd), new BN(2 * LAMPORTS_PER_SOL), SKEW_BIG, 1, new BN(expiry))

@@ -1,6 +1,6 @@
 // E2E ENGINE lawan validator lokal: angka yang DITAMPILIN UI harus SAMA PERSIS (ke lamport) sama angka on-chain.
 // Rumusnya diambil dari src/engine.ts — file yang SAMA yang dipakai App.tsx (Est. fill, funding, equity, liq price).
-//   Babak panggung (DEMO.md, angka App.tsx): XAU $2650 · seed 2 SOL · depth 25 SOL · LONG 0.5 SOL 5x ·
+//   Babak panggung (DEMO.md, angka App.tsx): XAU @ harga Pyth (clone) · seed 2 SOL · depth 25 SOL · LONG 0.5 SOL 5x ·
 //     pump +25% dari entry · close · buka lagi · crash -25% · likuidasi sendiri.
 //   Dua sisi: trader kedua SHORT ke pasar long-heavy · funding dua arah · batas harga likuidasi (±0.2%).
 //   node e2e-engine.mjs
@@ -32,9 +32,10 @@ const programFor = (signer) => new Program(idl, new AnchorProvider(conn, new Wal
 const program = programFor(kp)
 const PID = new PublicKey(idl.address)
 const pda = (seeds) => PublicKey.findProgramAddressSync(seeds, PID)[0]
+// Perp slot = ["market", feed, expiry 0 as i64 LE].
 const marketOf = (hex) => {
   const feed = new PublicKey(Buffer.from(hex, 'hex'))
-  const market = pda([Buffer.from('market'), feed.toBuffer()])
+  const market = pda([Buffer.from('market'), feed.toBuffer(), Buffer.alloc(8)])
   return { feed, market, vault: pda([Buffer.from('vault'), market.toBuffer()]) }
 }
 const positionOf = (market, owner) => pda([Buffer.from('position'), market.toBuffer(), owner.toBuffer()])
@@ -95,8 +96,14 @@ const HALF = BigInt(SOL / 2)
 
 // ━━ A. BABAK PANGGUNG (angka persis App.tsx + DEMO.md) ━━
 const xau = marketOf(XAU)
-console.log('[A1] create_market XAU/USD perp @ $2650 · seed 2 SOL · depth 25 SOL')
-await create(xau, 2_650_000_000n)
+// Starting price exactly like App.tsx: the latest Pyth price in the sponsored account on this cluster
+// (e2e-local.sh clones the real devnet XAU account), else the reference price.
+const xauAcct = await conn.getAccountInfo(new PublicKey('2uPQGpm8X4ZkxMHxrAW1QuhXcse1AHEgPih6Xp9NuEWW'))
+const xauStart = xauAcct
+  ? BigInt(Math.round(Number(xauAcct.data.readBigInt64LE(41 + 32)) * 10 ** (xauAcct.data.readInt32LE(41 + 48) + 6)))
+  : 4_122_820_000n
+console.log(`[A1] create_market XAU/USD perp @ $${Number(xauStart) / 1e6} (${xauAcct ? 'Pyth price, cloned from devnet' : 'reference price'}) · seed 2 SOL · depth 25 SOL`)
+await create(xau, xauStart)
 
 console.log('[A2] LONG 0.5 SOL 5x — "Est. fill" di order ticket vs entry on-chain')
 const est1 = E.fillPrice(await readMarket(xau.market), HALF * 5n, true)

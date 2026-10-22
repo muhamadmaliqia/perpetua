@@ -6,8 +6,23 @@ cd "$(dirname "$0")"
 
 RPC=http://127.0.0.1:8899
 
+# Harga ASLI di demo lokal: clone akun harga Pyth sponsored dari devnet (XAU/SOL/BTC/ETH, owner Pyth Receiver)
+# -> app mulai tiap pasar dari harga Pyth terakhir (beku pas clone). Offline -> jalan tanpa clone (harga cadangan).
+CLONES=""
+if curl -s -m 5 -o /dev/null https://api.devnet.solana.com; then
+  CLONES="--url https://api.devnet.solana.com"
+  for ACCT in 2uPQGpm8X4ZkxMHxrAW1QuhXcse1AHEgPih6Xp9NuEWW 7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE \
+              4cSM2e6rvbGQUFiJbqytoVMi5GgghSMr8LwVrT9VPSPo 42amVS4KgzR9rA28tkVYqVXjq9Qa8dcZQMbH5EYFX6XC; do
+    CLONES="$CLONES --clone $ACCT"
+  done
+  echo "▶ Clone harga Pyth asli dari devnet (XAU/SOL/BTC/ETH)…"
+else
+  echo "▶ Devnet nggak kejangkau — jalan tanpa clone (pakai harga cadangan)."
+fi
+
 echo "▶ Nyalain validator lokal…"
-solana-test-validator --ledger /tmp/perpetua-ledger --reset >/tmp/perpetua-validator.log 2>&1 &
+# shellcheck disable=SC2086 # CLONES sengaja dipecah jadi beberapa argumen
+solana-test-validator --ledger /tmp/perpetua-ledger --reset $CLONES >/tmp/perpetua-validator.log 2>&1 &
 VPID=$!
 
 echo "  nunggu RPC siap…"
