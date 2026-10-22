@@ -212,6 +212,20 @@ button { font-family: var(--ui); }
 .statrow .v small { font: 400 11px/1 var(--mono); color: var(--fg-dim); margin-left: 6px; }
 .statrow .v.down { color: var(--red); }
 
+/* engine strip: skew (vAMM depth) moves the fill, funding drifts with skew */
+.engine { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 34px; align-items: flex-end; padding: 22px 0; box-shadow: inset 0 -1px 0 var(--line); }
+.engine .k { font: 400 9px/1 var(--mono); letter-spacing: 0.2em; text-transform: uppercase; color: var(--fg-dim); }
+.engine .head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.engine .head .s { font: 400 10px/1 var(--mono); color: var(--fg-dim); white-space: nowrap; }
+.engine .bar { display: flex; justify-content: space-between; height: 3px; border-radius: 2px; overflow: hidden; background: rgba(255, 255, 255, 0.08); margin: 16px 0 10px; }
+.engine .bar .l { background: var(--green); }
+.engine .bar .r { background: var(--red); }
+.engine .legend { display: flex; justify-content: space-between; gap: 12px; }
+.engine .legend span { font: 400 9.5px/1 var(--mono); color: var(--fg-dim); }
+.engine .fundbox { text-align: right; }
+.engine .fundbox .v { font: 400 22px/1 var(--ui); margin-top: 13px; font-variant-numeric: tabular-nums; }
+.engine .fundbox .sub { font: 400 9.5px/1 var(--mono); color: var(--fg-dim); margin-top: 9px; }
+
 /* position health + pnl */
 .posrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 34px; align-items: flex-end; padding-top: 26px; }
 .health .head { display: flex; align-items: baseline; justify-content: space-between; }
@@ -348,6 +362,8 @@ button { font-family: var(--ui); }
   .statrow { grid-template-columns: 1fr 1fr; gap: 20px; }
   .posrow { grid-template-columns: 1fr; gap: 20px; }
   .pnl { text-align: left; }
+  .engine { grid-template-columns: 1fr; gap: 20px; }
+  .engine .fundbox { text-align: left; }
   .connect h1 { font-size: 46px; }
 }
 @media (prefers-reduced-motion: reduce) {

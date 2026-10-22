@@ -7,6 +7,11 @@ import {
   feedPubkey, getProgram, marketPda, vaultPda, positionPda, pythPriceAccount, decodePythPrice,
   pick, getBurnerKeypair, makeBurnerWallet,
 } from './anchor'
+// Engine math mirrored from the program (fill, funding, liquidation) — the same file the CLI e2e checks against.
+import {
+  accrueFunding, equityAfterFunding, fillPrice, fundingOwed, liquidationPrice, maintenance, ratePctPerHour,
+  skewPremium, type EngineMarket, type EnginePosition,
+} from './engine'
 
 const fmtUsd = (p6: number) =>
   '$' + (p6 / PRICE_ONE).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -34,13 +39,17 @@ const fmtDur = (s: number) => {
 }
 const fmtAgo = (s: number) => (s < 90 ? `${Math.max(0, Math.round(s))}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : `${(s / 3600).toFixed(1)}h ago`)
 const fmtClock = (unix: number) => new Date(unix * 1000).toLocaleTimeString('en-GB')
+const fmtPct = (x: number, dp = 2) => `${x >= 0 ? '+' : ''}${x.toFixed(dp)}%`
 const DURATIONS = [60, 300, 3600]
+const MAX_LEVERAGE = 20 // constants.rs
+const big = (v: any): bigint => BigInt(v.toString())
 
 type MarketState = {
   authority: string; markPrice: number; totalLong: number; totalShort: number
   kind: number; expiryTs: number; resolved: boolean; resolutionPrice: number; lastOracleTs: number
+  eng: EngineMarket
 } | null
-type PositionState = { isLong: boolean; size: number; collateral: number; entryPrice: number } | null
+type PositionState = { isLong: boolean; size: number; collateral: number; entryPrice: number; eng: EnginePosition } | null
 // akun harga Pyth sponsored buat feed ini di cluster sekarang: harga + publish_time, atau 'missing'
 type PythAcct = { price6: number; publishTime: number } | 'missing' | null
 
@@ -114,6 +123,15 @@ export default function App() {
               resolved: !!pick(m, 'resolved', 'resolved'),
               resolutionPrice: Number(pick(m, 'resolutionPrice', 'resolution_price').toString()),
               lastOracleTs: Number(pick(m, 'lastOracleTs', 'last_oracle_ts').toString()),
+              eng: {
+                markPrice: big(pick(m, 'markPrice', 'mark_price')),
+                totalLong: big(pick(m, 'totalLong', 'total_long')),
+                totalShort: big(pick(m, 'totalShort', 'total_short')),
+                skewScale: big(pick(m, 'skewScale', 'skew_scale')),
+                cumulativeFunding: big(pick(m, 'cumulativeFunding', 'cumulative_funding')),
+                fundingRate: big(pick(m, 'fundingRate', 'funding_rate')),
+                lastFundingTs: big(pick(m, 'lastFundingTs', 'last_funding_ts')),
+              },
             }
           : null,
       )
@@ -126,6 +144,13 @@ export default function App() {
                 size: Number(pick(p, 'size', 'size').toString()),
                 collateral: Number(pick(p, 'collateral', 'collateral').toString()),
                 entryPrice: Number(pick(p, 'entryPrice', 'entry_price').toString()),
+                eng: {
+                  isLong: pick(p, 'isLong', 'is_long'),
+                  size: big(pick(p, 'size', 'size')),
+                  collateral: big(pick(p, 'collateral', 'collateral')),
+                  entryPrice: big(pick(p, 'entryPrice', 'entry_price')),
+                  entryFunding: big(pick(p, 'entryFunding', 'entry_funding')),
+                },
               }
             : null,
         )
@@ -194,11 +219,14 @@ export default function App() {
   }, [refreshChain, refreshPythAcct])
 
   const isPred = market?.kind === MARKET_KIND_PREDICTION
+  // On-chain clock ticks while a market exists: the prediction countdown and funding (which accrues
+  // every second on-chain) both follow it.
+  const hasMarket = !!market
   useEffect(() => {
-    if (!isPred) return
+    if (!hasMarket) return
     const t = setInterval(() => setTick(Date.now()), 500)
     return () => clearInterval(t)
-  }, [isPred])
+  }, [hasMarket])
   const chainNow = tick / 1000 + chainOffset
   const expired = isPred && !!market && chainNow >= market.expiryTs
 
@@ -416,21 +444,43 @@ export default function App() {
   // A resolved prediction settles at the locked Pyth price (mirrors close_position on-chain).
   const mark = market?.resolved ? market.resolutionPrice : market?.markPrice ?? pyth ?? 0
   const pythReady = isPred && !!market && pythAcct && pythAcct !== 'missing' && pythAcct.publishTime >= market.expiryTs
-  let pnl = 0
+  // Funding as the program would accrue it at this second — frozen at expiry once a prediction resolves
+  // (close_position skips accrual on a resolved market).
+  const frozen = !!market && isPred && market.resolved
+  const fund = market
+    ? frozen
+      ? { fundingRate: market.eng.fundingRate, cumulativeFunding: market.eng.cumulativeFunding }
+      : accrueFunding(market.eng, BigInt(Math.floor(chainNow)))
+    : null
+  const owedBig = position && fund ? fundingOwed(position.eng, fund.cumulativeFunding) : 0n
+  const owed = Number(owedBig) // lamports: + = this position pays funding, - = it receives
+  const owedTxt = (Math.abs(owed) / LAMPORTS).toFixed(6)
+  const owedShown = Number(owedTxt) > 0 // first seconds accrue only a few lamports — no "−0.000000"
+  let pnl = 0 // net of funding = what a close pays out beyond the collateral
   let equity = 0
-  if (position && mark > 0 && position.entryPrice > 0) {
-    const raw = (position.size * (mark - position.entryPrice)) / position.entryPrice
-    pnl = position.isLong ? raw : -raw
-    equity = position.collateral + pnl
+  if (position && fund && mark > 0 && position.entryPrice > 0) {
+    equity = Number(equityAfterFunding(position.eng, BigInt(mark), fund.cumulativeFunding))
+    pnl = equity - position.collateral
   }
   const pnlPct = position && position.collateral > 0 ? (pnl / position.collateral) * 100 : 0
   const posLev = position ? Math.max(1, Math.round(position.size / position.collateral)) : 0
-  const maint = position ? 0.05 * position.size : 0
-  const liqP6 = position
-    ? Math.round(position.isLong ? position.entryPrice * (1.05 - 1 / posLev) : position.entryPrice * (0.95 + 1 / posLev))
-    : 0
+  const maint = position ? Number(maintenance(position.eng)) : 0
+  const liqP6 = position ? liquidationPrice(position.eng, owedBig) : 0
   const healthFrac = position ? Math.max(0, Math.min(1, (equity - maint) / Math.max(1, position.collateral - maint))) : 0
   const chgPct = position && position.entryPrice > 0 ? ((mark - position.entryPrice) / position.entryPrice) * 100 : 0
+
+  // Engine strip: skew (vAMM depth) + funding velocity, straight from on-chain state.
+  const longOi = market?.totalLong ?? 0
+  const shortOi = market?.totalShort ?? 0
+  const oi = longOi + shortOi
+  const premPct = market ? Number(skewPremium(market.eng)) / 1e4 : 0 // 6-dec fraction -> %
+  const rateH = fund ? ratePctPerHour(fund.fundingRate) : 0
+  // Order ticket: the fill the program would give this order right now — size moves the price.
+  const colLam = Math.round((parseFloat(collateral) || 0) * LAMPORTS)
+  const levN = parseInt(leverage) || 0
+  const orderSize = colLam > 0 && levN >= 1 && levN <= MAX_LEVERAGE ? BigInt(colLam) * BigInt(levN) : 0n
+  const estFill = market && orderSize > 0n && market.markPrice > 0 ? Number(fillPrice(market.eng, orderSize, isLong)) : 0
+  const impactPct = market && estFill > 0 ? ((estFill - market.markPrice) / market.markPrice) * 100 : 0
   const feedShort = feed.pythId.slice(0, 4) + '…' + feed.pythId.slice(-4)
 
   const priceHero = () => {
@@ -584,8 +634,10 @@ export default function App() {
                   {market &&
                     (market.lastOracleTs > 0 ? (
                       <> · price verified on-chain <span className="dim">published {fmtClock(market.lastOracleTs)}</span></>
+                    ) : isPred ? (
+                      <> · <span className="dim">starting price set at creation · after that only Pyth can move it</span></>
                     ) : (
-                      <> · <span className="dim">mark set by market creator (demo)</span></>
+                      <> · <span className="dim">Creator-set mark (demo) · retires at the first Pyth price</span></>
                     ))}
                 </span>
               </div>
@@ -640,11 +692,40 @@ export default function App() {
                     ) : (
                       <>
                         <div><div className="k">Mark</div><div className="v num">{fmtUsd(market.markPrice)}</div></div>
-                        <div><div className="k">Open interest</div><div className="v num">{fmtSol(market.totalLong)}<small>SOL</small></div></div>
+                        <div><div className="k">Open interest</div><div className="v num">{fmtSol(oi)}<small>SOL</small></div></div>
                         <div><div className="k">Price source</div><div className="v">{market.lastOracleTs > 0 ? 'Pyth ✓' : 'Creator-set'}</div></div>
                         <div><div className="k">Counterparty</div><div className="v">vAMM</div></div>
                       </>
                     )}
+                  </div>
+
+                  {/* Engine: skew moves the fill, funding drifts with skew (SIP-279) — live from on-chain state. */}
+                  <div className="engine">
+                    <div className="skewbox">
+                      <div className="head">
+                        <span className="k">
+                          SKEW · {oi === 0 ? 'NO OPEN INTEREST' : longOi > shortOi ? 'LONG-HEAVY' : longOi < shortOi ? 'SHORT-HEAVY' : 'BALANCED'}
+                        </span>
+                        <span className="s num">{fmtSol(longOi)} long / {fmtSol(shortOi)} short</span>
+                      </div>
+                      <div className="bar">
+                        <div className="l" style={{ width: (oi > 0 ? (longOi / oi) * 100 : 0) + '%' }} />
+                        <div className="r" style={{ width: (oi > 0 ? (shortOi / oi) * 100 : 0) + '%' }} />
+                      </div>
+                      <div className="legend">
+                        <span className="num">fill premium {fmtPct(premPct)}</span>
+                        <span className="num">
+                          depth {(Number(market.eng.skewScale) / LAMPORTS).toLocaleString('en-US', { maximumFractionDigits: 2 })} SOL
+                        </span>
+                      </div>
+                    </div>
+                    <div className="fundbox">
+                      <div className="k">FUNDING / HOUR</div>
+                      <div className="v num">{fmtPct(rateH, Math.abs(rateH) >= 1 ? 2 : 4)}</div>
+                      <div className="sub">
+                        {frozen ? 'frozen at expiry' : rateH > 0 ? 'longs pay shorts' : rateH < 0 ? 'shorts pay longs' : 'flat'}
+                      </div>
+                    </div>
                   </div>
 
                   {position && (
@@ -681,12 +762,19 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Pump/crash = creator override; hidden on prediction markets, where only Pyth decides. */}
+                  {/* Pump/crash = creator override. On-chain rule: perps only, and only until the market's
+                      first Pyth price; prediction markets never (only Pyth moves them). */}
                   {isAuthority && position && !isPred && (
                     <div className="demostrip">
                       <span className="lbl">AUTHORITY · DEMO</span>
-                      <button className="btn ghost" disabled={busy} onClick={pumpPrice}>pump +25%</button>
-                      <button className="btn ghost" disabled={busy} onClick={crashPrice}>crash −25%</button>
+                      {market.lastOracleTs === 0 ? (
+                        <>
+                          <button className="btn ghost" disabled={busy} onClick={pumpPrice}>pump +25%</button>
+                          <button className="btn ghost" disabled={busy} onClick={crashPrice}>crash −25%</button>
+                        </>
+                      ) : (
+                        <span className="inlinelog">Price comes from Pyth — the creator override is retired on-chain.</span>
+                      )}
                     </div>
                   )}
                 </>
@@ -720,6 +808,12 @@ export default function App() {
 
                   <div className="summary">
                     <div className="row"><span className="k">Notional</span><span className="v num">{((Number(collateral) || 0) * (Number(leverage) || 0)).toFixed(2)} SOL</span></div>
+                    {estFill > 0 && !expired && (
+                      <>
+                        <div className="row"><span className="k">Est. fill</span><span className="v num">{fmtUsd(estFill)}</span></div>
+                        <div className="row"><span className="k">Price impact</span><span className="v num">{fmtPct(impactPct)}</span></div>
+                      </>
+                    )}
                     <div className="row"><span className="k">Counterparty</span><span className="v">vAMM pool</span></div>
                   </div>
 
@@ -736,6 +830,13 @@ export default function App() {
                     <div className="row"><span className="k">Entry</span><span className="v num">{fmtUsd(position.entryPrice)}</span></div>
                     <div className="row"><span className="k">Mark</span><span className="v num">{fmtUsd(mark)}</span></div>
                     <div className="row"><span className="k">Liq price</span><span className="v num down">{fmtUsd(liqP6)}</span></div>
+                    <div className="row">
+                      <span className="k">Funding</span>
+                      <span className={'v num' + (owedShown && owed > 0 ? ' down' : owedShown && owed < 0 ? ' up' : '')}>
+                        {owedShown ? (owed > 0 ? '−' : '+') : ''}
+                        {owedTxt} SOL
+                      </span>
+                    </div>
                     <div className="row"><span className="k">Equity</span><span className="v num">{fmtSol(equity)} SOL</span></div>
                   </div>
                   <div className="spacer" />
