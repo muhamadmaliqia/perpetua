@@ -176,7 +176,7 @@ tanpa penjelasan · "every price comes from Pyth" (perp lokal pakai harga demo p
 
 ## 6. Checklist submit
 - [ ] Video ≤3 mnt ke-upload (publik: YouTube/Loom unlisted-public).
-- [ ] Repo GitHub publik (commit pakai identitas **bre + temen**).
+- [ ] Repo GitHub publik (commit pakai identitas **bre**).
 - [ ] README kebaca (wedge, arsitektur, cara jalanin, why-Solana).
 - [ ] Link live/demo devnet kalau ada. Kalau nggak, video + repo cukup.
 - [ ] Satu submission per tim. Cek Rules/Discord buat field wajib + aturan kode-AI + kode pra-lomba.
