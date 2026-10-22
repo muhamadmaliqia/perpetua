@@ -5,6 +5,9 @@
 #                           (harga terakhir terbit SEBELUM expiry = persis yg dilihat UI di localnet)
 #   3) e2e-predict.mjs ETH  prediction, akun Pyth SINTETIS (fixture e2e, BUKAN data asli) terbit SETELAH
 #                           expiry -> resolve LOLOS, close settle di harga terkunci
+#      (2 & 3 juga: pembuat pasar nyoba set harga prediksi -> DITOLAK CreatorPriceOnPrediction)
+#   4) e2e-engine.mjs       angka UI (src/engine.ts) == angka on-chain ke lamport: fill premium, funding,
+#                           payout close, equity + bounty likuidasi, batas harga likuidasi (babak panggung DEMO.md)
 # Butuh internet (clone akun dari devnet). Validator dimatiin otomatis di akhir.
 # Jalanin:  bash e2e-local.sh
 set -euo pipefail
@@ -32,12 +35,14 @@ solana airdrop 100 --url "$RPC" >/dev/null
 anchor deploy --provider.cluster localnet
 
 cd app
-echo ""; echo "━━ 1/3 PERP (smoke.mjs)"
+echo ""; echo "━━ 1/4 PERP (smoke.mjs)"
 node smoke.mjs
-echo ""; echo "━━ 2/3 PREDICTION · akun Pyth ASLI (clone) -> mesti nunggu"
+echo ""; echo "━━ 2/4 PREDICTION · akun Pyth ASLI (clone) -> mesti nunggu"
 node e2e-predict.mjs "$BTC" 95000 awaiting
-echo ""; echo "━━ 3/3 PREDICTION · akun Pyth SINTETIS terbit setelah expiry -> mesti resolved"
+echo ""; echo "━━ 3/4 PREDICTION · akun Pyth SINTETIS terbit setelah expiry -> mesti resolved"
 node e2e-predict.mjs "$ETH" 3400 resolved 3500
+echo ""; echo "━━ 4/4 ENGINE · angka UI == angka on-chain (fill, funding, payout, likuidasi)"
+node e2e-engine.mjs
 
 echo ""
-echo "✅ E2E LOKAL: 3/3 OK"
+echo "✅ E2E LOKAL: 4/4 OK"

@@ -57,6 +57,16 @@ await program.methods
 const entry = Number((await program.account.position.fetch(position)).entryPrice.toString())
 console.log('    entry', entry / 1e6)
 
+console.log('[2b] pembuat pasar nyoba ngarang harga prediksi (set_mark_price) -> mesti DITOLAK')
+let overrideErr = null
+try {
+  await program.methods.setMarkPrice(usd6(Number(startUsd) * 2)).accountsPartial({ market, authority: kp.publicKey }).rpc()
+} catch (e) {
+  overrideErr = e?.message ?? String(e)
+}
+if (!overrideErr?.includes('CreatorPriceOnPrediction')) fail('override mestinya ditolak CreatorPriceOnPrediction, dapet: ' + (overrideErr ?? 'SUKSES'))
+console.log('    DITOLAK sesuai harapan: CreatorPriceOnPrediction (harga prediksi cuma dari Pyth)')
+
 process.stdout.write('[3] nunggu expiry on-chain')
 while ((await chainNow()) < expiry) {
   process.stdout.write('.')
