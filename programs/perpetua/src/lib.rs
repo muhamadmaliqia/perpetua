@@ -38,7 +38,8 @@ pub mod perpetua {
     }
 
     /// Override demo: set harga acuan manual (authority) — drama pump/crash & test
-    /// deterministik. Harga asli via update_mark_from_pyth. Nggak dipakai buat resolve.
+    /// deterministik. Cuma perp yg BELUM pernah dapet harga Pyth; prediction market selalu
+    /// ditolak. Harga Pyth pertama mensiunkan override ini permanen. Nggak dipakai buat resolve.
     pub fn set_mark_price(ctx: Context<SetMarkPrice>, price: u64) -> Result<()> {
         crate::instructions::set_mark_price::handle_set_mark_price(ctx, price)
     }

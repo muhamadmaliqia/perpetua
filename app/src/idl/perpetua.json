@@ -489,7 +489,8 @@
       "name": "set_mark_price",
       "docs": [
         "Override demo: set harga acuan manual (authority) — drama pump/crash & test",
-        "deterministik. Harga asli via update_mark_from_pyth. Nggak dipakai buat resolve."
+        "deterministik. Cuma perp yg BELUM pernah dapet harga Pyth; prediction market selalu",
+        "ditolak. Harga Pyth pertama mensiunkan override ini permanen. Nggak dipakai buat resolve."
       ],
       "discriminator": [
         117,
@@ -745,6 +746,16 @@
       "code": 6020,
       "name": "OraclePriceTooLate",
       "msg": "Oracle price was published after the resolution window"
+    },
+    {
+      "code": 6021,
+      "name": "CreatorPriceOnPrediction",
+      "msg": "Prediction markets are priced by Pyth only — the creator cannot set the price"
+    },
+    {
+      "code": 6022,
+      "name": "CreatorPriceRetired",
+      "msg": "This market already has a Pyth price — the creator price override is retired"
     }
   ],
   "types": [
@@ -776,7 +787,8 @@
             "name": "mark_price",
             "docs": [
               "Harga acuan saat ini, 6 desimal. Diisi dari Pyth terverifikasi (update_mark_from_pyth,",
-              "bebas-izin) atau override demo authority (set_mark_price)."
+              "bebas-izin) atau override demo authority (set_mark_price — cuma perp yg belum pernah",
+              "dapet harga Pyth)."
             ],
             "type": "u64"
           },
@@ -849,8 +861,9 @@
           {
             "name": "last_oracle_ts",
             "docs": [
-              "F2: publish_time harga Pyth terakhir yang masuk ke mark_price. 0 = mark sekarang",
-              "BUKAN dari Pyth (harga awal / override demo) — UI cuma boleh pasang badge Pyth kalau > 0."
+              "F2: publish_time harga Pyth terakhir yang masuk ke mark_price. 0 = pasar BELUM PERNAH",
+              "dapet harga Pyth (mark = harga awal / override demo) — UI cuma boleh pasang badge Pyth",
+              "kalau > 0. Sekali > 0 nggak pernah balik 0 -> override pembuat pasar pensiun permanen."
             ],
             "type": "i64"
           },

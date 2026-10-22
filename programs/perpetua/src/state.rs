@@ -11,7 +11,8 @@ pub struct Market {
     /// PriceUpdateV2 tiap kali harga Pyth dibaca (update_mark_from_pyth / resolve_market).
     pub oracle_feed: Pubkey,
     /// Harga acuan saat ini, 6 desimal. Diisi dari Pyth terverifikasi (update_mark_from_pyth,
-    /// bebas-izin) atau override demo authority (set_mark_price).
+    /// bebas-izin) atau override demo authority (set_mark_price — cuma perp yg belum pernah
+    /// dapet harga Pyth).
     pub mark_price: u64,
     /// Total notional posisi long & short (open interest per sisi).
     pub total_long: u64,
@@ -35,8 +36,9 @@ pub struct Market {
     pub resolved: bool,
     /// F3: harga Pyth terverifikasi yang DIKUNCI pas resolve (6-dec). 0 sebelum resolve.
     pub resolution_price: u64,
-    /// F2: publish_time harga Pyth terakhir yang masuk ke mark_price. 0 = mark sekarang
-    /// BUKAN dari Pyth (harga awal / override demo) — UI cuma boleh pasang badge Pyth kalau > 0.
+    /// F2: publish_time harga Pyth terakhir yang masuk ke mark_price. 0 = pasar BELUM PERNAH
+    /// dapet harga Pyth (mark = harga awal / override demo) — UI cuma boleh pasang badge Pyth
+    /// kalau > 0. Sekali > 0 nggak pernah balik 0 -> override pembuat pasar pensiun permanen.
     pub last_oracle_ts: i64,
     /// Bump PDA vault (kolam lamports lawan-dagang).
     pub vault_bump: u8,

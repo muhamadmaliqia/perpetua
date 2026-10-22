@@ -44,4 +44,8 @@ pub enum PerpetuaError {
     OraclePriceBeforeExpiry,
     #[msg("Oracle price was published after the resolution window")]
     OraclePriceTooLate,
+    #[msg("Prediction markets are priced by Pyth only — the creator cannot set the price")]
+    CreatorPriceOnPrediction,
+    #[msg("This market already has a Pyth price — the creator price override is retired")]
+    CreatorPriceRetired,
 }

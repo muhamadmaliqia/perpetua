@@ -519,8 +519,9 @@ fn test_funding_long_heavy_long_pays() {
 
 /// F3+F2 SELF-RESOLVING PREDICTION MARKET dari PYTH: pasar prediction ber-expiry. Resolve DITOLAK
 /// sebelum jatuh tempo; pas expiry siapa pun (PIHAK KETIGA) boleh resolve -> kontrak BACA harga
-/// Pyth terverifikasi & kunci; close settle di harga TERKUNCI meski live mark berubah; resolve
-/// kedua ditolak. Nggak ada manusia/komite yg mutusin — Pyth hakimnya.
+/// Pyth terverifikasi & kunci; abis itu harganya nggak bisa digerakin siapa pun (pembuat pasar &
+/// keeper ditolak); close settle di harga TERKUNCI; resolve kedua ditolak. Nggak ada manusia/komite
+/// yg mutusin — Pyth hakimnya.
 #[test]
 fn test_prediction_resolves_from_pyth() {
     let (mut svm, program_id) = setup();
@@ -566,10 +567,12 @@ fn test_prediction_resolves_from_pyth() {
     // RESOLVE LAGI -> DITOLAK (AlreadyResolved).
     expect_err(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market, pyth), &resolver, err_code(perpetua::error::PerpetuaError::AlreadyResolved), "resolve kedua");
 
-    // BUKTI KUNCI: live mark diturunin ke $100, TAPI settle tetap pakai $180 terkunci.
-    send(&mut svm, ix_set_price(program_id, &trader.pubkey(), market, PRICE_100), &trader);
+    // BUKTI KUNCI: abis resolve NGGAK ADA yang bisa gerakin harga — pembuat pasar ditolak (prediction
+    // = harga cuma dari Pyth), keeper Pyth juga ditolak (udah resolved).
+    expect_err(&mut svm, ix_set_price(program_id, &trader.pubkey(), market, PRICE_100), &trader, err_code(perpetua::error::PerpetuaError::CreatorPriceOnPrediction), "override pembuat pasar abis resolve");
+    expect_err(&mut svm, ix_update_mark(program_id, &resolver.pubkey(), market, pyth), &resolver, err_code(perpetua::error::PerpetuaError::AlreadyResolved), "dorong Pyth abis resolve");
 
-    // CLOSE -> settle di harga RESOLUSI $180 (BUKAN live $100). PnL = 10*(180-100)/100 = 8 SOL,
+    // CLOSE -> settle di harga RESOLUSI $180 terkunci. PnL = 10*(180-100)/100 = 8 SOL,
     // payout = 2 + 8 = 10 SOL. Vault 20 + 2 jaminan = 22 -> solvent.
     let before = svm.get_account(&trader.pubkey()).unwrap().lamports;
     let ix = Instruction::new_with_bytes(
@@ -579,7 +582,7 @@ fn test_prediction_resolves_from_pyth() {
     );
     send(&mut svm, ix, &trader);
     let after = svm.get_account(&trader.pubkey()).unwrap().lamports;
-    // payout ~10 SOL (di harga terkunci $180), BUKAN ~2 SOL (kalau salah pakai live $100).
+    // payout ~10 SOL (di harga terkunci $180).
     assert!(
         after > before + 9_900_000_000 && after < before + 10_100_000_000,
         "settle mestinya di harga TERKUNCI $180 (payout ~10 SOL): before={} after={}",
@@ -588,8 +591,9 @@ fn test_prediction_resolves_from_pyth() {
     assert_eq!(load_market(&svm, &market).total_long, 0);
 }
 
-/// CELAH DITUTUP: pembuat pasar pegang LONG lalu ngisi mark $180 sendiri pas expiry
-/// (set_mark_price). Pyth bilang $140. Putusan HARUS $140 — harga karangan pembuat pasar diabaikan.
+/// CELAH DITUTUP: pembuat pasar pegang LONG lalu nyoba ngisi mark $180 sendiri pas expiry
+/// (set_mark_price) -> DITOLAK on-chain (prediction = harga cuma dari Pyth). Pyth bilang $140.
+/// Putusan HARUS $140.
 #[test]
 fn test_resolve_ignores_creator_mark() {
     let (mut svm, program_id) = setup();
@@ -605,9 +609,10 @@ fn test_resolve_ignores_creator_mark() {
     send(&mut svm, ix_create_market_kind(program_id, &creator.pubkey(), feed, market, vault, PRICE_100, 20 * SOL, SKEW_BIG, perpetua::constants::MARKET_KIND_PREDICTION, expiry), &creator);
     send(&mut svm, ix_open(program_id, &creator.pubkey(), market, vault, position, 2 * SOL, 5, true), &creator);
 
-    // Pas expiry: pembuat pasar nyoba ngarang $180. Pyth asli bilang $140.
+    // Pas expiry: pembuat pasar nyoba ngarang $180 -> DITOLAK. Pyth asli bilang $140.
     set_clock(&mut svm, expiry + 10);
-    send(&mut svm, ix_set_price(program_id, &creator.pubkey(), market, 180_000_000), &creator);
+    expect_err(&mut svm, ix_set_price(program_id, &creator.pubkey(), market, 180_000_000), &creator, err_code(perpetua::error::PerpetuaError::CreatorPriceOnPrediction), "pembuat pasar ngarang harga prediction");
+    assert_eq!(load_market(&svm, &market).mark_price, PRICE_100, "mark nggak boleh kegeser karangan pembuat pasar");
     put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(140), 7_000_000, -8, expiry + 5, true), perpetua::constants::PYTH_RECEIVER_PROGRAM_ID);
 
     send(&mut svm, ix_resolve(program_id, &resolver.pubkey(), market, pyth), &resolver);
@@ -702,7 +707,8 @@ fn test_resolve_rejects_perp() {
 
 /// F2: keeper SIAPA PUN (bukan authority) dorong harga Pyth -> mark ke-skala 6 desimal +
 /// publish_time kecatat. Harga basi (>120 dtk) & harga lebih lama dari yg terakhir ditolak.
-/// Override demo authority nge-reset last_oracle_ts ke 0 (UI nggak boleh pasang badge Pyth).
+/// Override demo pembuat pasar boleh SEBELUM ada harga Pyth; begitu harga Pyth masuk, override
+/// PENSIUN (ditolak) dan harga Pyth + badge-nya utuh.
 #[test]
 fn test_update_mark_from_pyth_permissionless() {
     use perpetua::error::PerpetuaError as E;
@@ -721,6 +727,10 @@ fn test_update_mark_from_pyth_permissionless() {
 
     send(&mut svm, ix_create_market(program_id, &creator.pubkey(), feed, market, vault, PRICE_100, 10 * SOL, SKEW_BIG), &creator);
     assert_eq!(load_market(&svm, &market).last_oracle_ts, 0, "mark awal BUKAN dari Pyth");
+
+    // SEBELUM ada harga Pyth: override demo pembuat pasar masih boleh (jalur pump/crash localnet).
+    send(&mut svm, ix_set_price(program_id, &creator.pubkey(), market, 101_000_000), &creator);
+    assert_eq!(load_market(&svm, &market).mark_price, 101_000_000);
 
     // Pyth $150 (expo -8), terbit 5 dtk lalu -> mark = 150_000_000.
     put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(150), 1_000_000, -8, t - 5, true), receiver);
@@ -742,11 +752,11 @@ fn test_update_mark_from_pyth_permissionless() {
     put_pyth(&mut svm, pyth, pyth_data(&feed, pyth_usd(149), 1_000_000, -8, t + 150, true), receiver);
     expect_err(&mut svm, ix_update_mark(program_id, &keeper.pubkey(), market, pyth), &keeper, err_code(E::StaleOracle), "harga mundur");
 
-    // Override demo authority -> last_oracle_ts balik 0 (mark sekarang bukan Pyth).
-    send(&mut svm, ix_set_price(program_id, &creator.pubkey(), market, 120_000_000), &creator);
+    // Pasar udah punya harga Pyth -> override demo pembuat pasar PENSIUN: ditolak, harga Pyth utuh.
+    expect_err(&mut svm, ix_set_price(program_id, &creator.pubkey(), market, 120_000_000), &creator, err_code(E::CreatorPriceRetired), "override abis ada harga Pyth");
     let m2 = load_market(&svm, &market);
-    assert_eq!(m2.mark_price, 120_000_000);
-    assert_eq!(m2.last_oracle_ts, 0, "override demo mestinya nge-reset badge Pyth");
+    assert_eq!(m2.mark_price, 152_000_000, "harga Pyth nggak boleh ketimpa karangan");
+    assert_eq!(m2.last_oracle_ts, t + 190, "badge Pyth tetep (publish_time terakhir)");
 }
 
 /// Parser kontrak vs BYTE ASLI akun Pyth devnet (SOL/USD, owner Pyth Receiver): bukan fixture
