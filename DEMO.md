@@ -14,7 +14,8 @@ Urutan klik udah dikunci, narasi udah ditulis kata-per-kata, ada rencana cadanga
 - [ ] Program ke-deploy (pilih jalur di §1).
 - [ ] Frontend jalan: `cd ~/perpetua/app && npm run dev` → buka URL sesuai jalur.
 - [ ] **Lokal:** wallet = **burner otomatis** (pojok kanan atas `… · burner`), saldo 5 SOL diisi sendiri — nol
-      Phantom, nol faucet. **Devnet:** Phantom di jaringan Devnet, saldo ≥2 SOL (tombol `airdrop 2 SOL` nongol
+      Phantom, nol faucet. `demo-local.sh` nyalin akun harga Pyth ASLI dari devnet (butuh internet) → tiap pasar
+      mulai dari harga Pyth terakhir (beku pas validator dinyalain). Offline → harga cadangan. **Devnet:** Phantom di jaringan Devnet, saldo ≥2 SOL (tombol `airdrop 2 SOL` nongol
       kalau saldo <1).
 - [ ] Zoom browser 110–125% biar angka kebaca di video. Tutup tab/notif lain.
 - [ ] **Pasar fresh:** satu feed = satu pasar. Mau ulang dari nol → restart `bash demo-local.sh` (ledger di-reset),
@@ -51,7 +52,8 @@ cd ~/perpetua/app && npm run dev          # terminal 2
 
 **Babak 1 — IGNITE (bebas-izin, ~10 dtk)**
 1. Kiri: pilih **XAU/USD** (paling atas). Kotak **ANY PYTH FEED**: **PERP**.
-2. Klik **IGNITE MARKET** → pasar hidup, seed likuiditas 2 SOL, oracle = feed Pyth.
+2. Klik **IGNITE MARKET** → pasar hidup di **harga Pyth terakhir** (baris oracle: "latest Pyth price published …"),
+   seed likuiditas 2 SOL, oracle = feed Pyth.
 
 **Babak 2 — TRADE: ukuran order gerakin harga + PnL live**
 3. Order ticket (kanan): **LONG · 0.5 · 5×**. Tunjuk **Est. fill** + **Price impact +5.00%** — harga isi naik karena
@@ -73,7 +75,9 @@ cd ~/perpetua/app && npm run dev          # terminal 2
 
 **Babak 4 — PREDIKSI: Pyth yang mutusin (DEVNET — butuh akun Pyth asli)**
 10. Pilih **SOL/USD** (atau BTC/ETH/XAU — **US500 nggak punya akun Pyth di devnet**). Kotak ANY PYTH FEED:
-    **PREDICTION · 1M** → **IGNITE PREDICTION**. Harga awal = harga Pyth terakhir buat feed itu.
+    **PREDICTION · 1M** → **IGNITE PREDICTION**. Harga awal = harga Pyth terakhir buat feed itu. Tiap ronde = pasar
+    sendiri: begitu ronde selesai, tombol jadi **NEW ROUND** (feed nggak pernah "abis"). Link langsung ke tampilan ini:
+    `…/?feed=SOL/USD&view=prediction`.
 11. **OPEN LONG** (taruhan naik) atau SHORT. Panel **RESOLVES IN** ngitung mundur pakai jam on-chain.
 12. Abis expiry: **EXPIRED · AWAITING PYTH** — nunjukin harga Pyth terakhir + umurnya. Akun Pyth gratisan
     (sponsored) update **kira-kira sejam sekali** → tunggu sampai tulisannya *"after expiry, ready to resolve"*
@@ -85,19 +89,17 @@ cd ~/perpetua/app && npm run dev          # terminal 2
 
 ### Angka panggung — semua dikunci tes
 
-| Angka di layar | Nilai (contoh: XAU default $2,650) | Dikunci di |
+| Angka di layar | Nilai (P = harga Pyth XAU saat mulai) | Dikunci di |
 |---|---|---|
-| Est. fill / entry LONG 0.5 · 5× | +5.00% → $2,782.50 | `app/e2e-engine.mjs` A2 · litesvm `test_skew_premium_long_up_short_down` |
+| Est. fill / entry LONG 0.5 · 5× | +5.00% → P × 1.05 | `app/e2e-engine.mjs` A2 · litesvm `test_skew_premium_long_up_short_down` |
 | Fill premium setelah open | +10.00% | `app/src/engine.ts` = on-chain (e2e-engine A2) |
-| Payout setelah pump +25% | 1.124999975 SOL (≈ 1.125 − funding) | e2e-engine A3 |
-| Entry ke-2 · liq price · crash | $3,652.03 · $3,104.23 · $2,739.02 | e2e-engine A4 |
+| PnL setelah pump +25% dari entry | ≈ +125% → payout ≈ 1.125 SOL (− funding beberapa lamport) | e2e-engine A3 |
+| Liq price · crash | entry × 0.85 · entry × 0.75 | e2e-engine A4 |
 | Bounty likuidasi | 0.025 SOL | e2e-engine A4 |
 | Putusan prediksi | harga Pyth, bukan karangan pembuat pasar | litesvm `test_resolve_ignores_creator_mark` · e2e 2/4 + 3/4 |
 
-⚠️ **Harga awal lokal = angka tulis-tangan** (`app/src/anchor.ts`, `FEEDS[].fallback`). Pyth devnet 21 Okt 2026:
-XAU **$4,122.82** (app $2,650) · SOL $105.82 (app $150) · BTC $82,425 (app $95,000) · ETH $2,434.72 (app $3,500).
-Layarnya jujur (*"Creator-set mark (demo)"*), tapi juri yang ngerti harga emas bisa curiga → **keputusan tim**
-(usulan: harga awal diambil dari akun Pyth asli). Kalau diubah, persen di tabel ini tetep sama; dolarnya ikut harga.
+Contoh run 22 Okt 2026 (XAU dari clone Pyth devnet): P = $4,061.515 → entry $4,264.59 → payout 1.124999974 SOL.
+Harga awal ngikut Pyth hari itu, jadi dolarnya berubah-ubah; persennya tetap.
 
 ---
 
@@ -165,7 +167,9 @@ tanpa penjelasan · "every price comes from Pyth" (perp lokal pakai harga demo p
 - **Tombol pump/crash ilang** → by design: pasar prediksi, atau perp yang udah pernah dapet harga Pyth (override
   pembuat pasar pensiun on-chain — `CreatorPriceRetired`). Pakai pasar perp lokal yang fresh.
 - **Likuidasi bilang "PositionHealthy"** → crash-nya kurang dalem buat leverage itu; crash lagi atau naikin leverage.
-- **Resolve: "No Pyth price account"** → lokal emang nggak punya akun Pyth. Prediksi = devnet.
+- **Resolve di lokal: "hasn't published a price after expiry"** → akun Pyth hasil clone itu BEKU (nggak pernah
+  update) → ronde lokal nggak bakal ke-resolve. Babak resolve = devnet. ("No Pyth price account" = validator
+  dinyalain tanpa internet → nggak ada clone.)
 - **Resolve: "hasn't published a price after expiry yet"** → tunggu update Pyth berikutnya (~sejam), coba lagi.
 - **Devnet lambat/mahal pas rekam babak 1–3** → pindah ke Jalur B (lokal), tampilannya identik.
 - **Validator lokal error** → `pkill -f solana-test-validator` lalu `bash demo-local.sh` lagi.

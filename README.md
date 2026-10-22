@@ -51,14 +51,14 @@ Perps on predictions already exists. *Permissionless, instant, any-feed market
 **On-chain accounts (PDAs)**
 | Account | Seeds | Holds |
 |---|---|---|
-| `Market` | `["market", feed]` | authority, oracle feed, mark price, open interest, skew/funding, kind + expiry, resolution price, last Pyth publish time |
+| `Market` | `["market", feed, expiry]` | authority, oracle feed, mark price, open interest, skew/funding, kind + expiry, resolution price, last Pyth publish time. A perp uses expiry 0 (one perp per feed); every prediction round has its own expiry, so a feed can host new rounds forever |
 | `Position` | `["position", market, owner]` | side, size, collateral, entry price |
 | `Vault` | `["vault", market]` | the liquidity pool (native SOL) |
 
 **Instructions**
 | Instruction | What it does |
 |---|---|
-| `create_market` | Ignite a perp *or* prediction market (with expiry) for a feed + seed initial liquidity — *permissionless* |
+| `create_market` | Ignite a perp (expiry 0) *or* a new prediction round (with expiry) for a feed + seed initial liquidity — *permissionless* |
 | `open_position` | Long/short with leverage; collateral locked into the vault |
 | `close_position` | Settle PnL vs mark price (or the locked resolution price); payout = `max(0, equity)` |
 | `liquidate_position` | **Permissionless** force-close when equity ≤ 5% of notional; liquidator earns a 1% bounty |
@@ -82,11 +82,11 @@ Collateral is **native SOL** (no SPL setup) for a fast, frictionless demo.
 
 | Piece | State |
 |---|---|
-| On-chain program (7 instructions) | ✅ `cargo test` **12 passing** — trade loop, +25% close, liquidation, skew fill, funding, prediction resolve from Pyth, creator can't fake the result (override rejected on predictions and retired after the first Pyth price), bad-oracle rejections, permissionless Pyth push, parser vs real devnet Pyth bytes |
+| On-chain program (7 instructions) | ✅ `cargo test` **13 passing** — trade loop, +25% close, liquidation, skew fill, funding, prediction resolve from Pyth, creator can't fake the result (override rejected on predictions and retired after the first Pyth price), bad-oracle rejections, permissionless Pyth push, parser vs real devnet Pyth bytes, many prediction rounds per feed |
 | Client wiring, end-to-end | ✅ `bash e2e-local.sh` **4/4** on a local validator — perp loop; prediction vs a real Pyth account cloned from devnet (correctly waits); prediction vs a synthetic test fixture (resolves, settles); engine check: the numbers the UI shows (fill, funding, payout, liquidation) equal the chain's to the lamport |
-| Frontend (React) | ✅ builds clean; perp + prediction (countdown, resolve from Pyth, locked price), live skew + funding strip, estimated fill and price impact before you trade, equity net of funding, honest price-source label |
+| Frontend (React) | ✅ builds clean; markets start at the latest Pyth price read from Pyth's on-chain accounts; perp + prediction rounds (countdown, resolve from Pyth, locked price, start a new round any time), live skew + funding strip, estimated fill and price impact before you trade, equity net of funding, honest price-source label, deep links (`?feed=SOL/USD&view=prediction`) |
 | Fresh Pyth prices on localnet | ⏳ needs a Pyth Hermes key (signed updates are key-gated). Without one, Pyth's sponsored accounts on devnet/mainnet update about hourly |
-| Devnet deployment | ✅ live — program [`GTaf7icvPHNzDMfd1gt8eN5p3fKERRwPaenfWKjGhaGP`](https://explorer.solana.com/address/GTaf7icvPHNzDMfd1gt8eN5p3fKERRwPaenfWKjGhaGP?cluster=devnet) (deployed from this repo's code) |
+| Devnet deployment | ✅ live — program [`GTaf7icvPHNzDMfd1gt8eN5p3fKERRwPaenfWKjGhaGP`](https://explorer.solana.com/address/GTaf7icvPHNzDMfd1gt8eN5p3fKERRwPaenfWKjGhaGP?cluster=devnet) (deployed from this repo's code; the upgrade to per-round prediction markets is pending) |
 
 **Proof on devnet — a prediction market decided by Pyth, not by a person** (JUP/USD, 1-minute expiry, Oct 22 2026):
 the market's creator tried to set the price → rejected on-chain (`CreatorPriceOnPrediction`); a resolve right at
@@ -105,7 +105,7 @@ settled the position at exactly that price.
 ```bash
 # 1. Program: build + test
 anchor build
-cargo test -p perpetua              # 12 passing
+cargo test -p perpetua              # 13 passing
 bash e2e-local.sh                   # optional: full client E2E on a local validator (needs internet)
 
 # 2. Deploy (devnet)
