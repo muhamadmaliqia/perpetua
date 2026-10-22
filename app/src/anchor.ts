@@ -10,16 +10,19 @@ export const SKEW_SCALE = 25 * LAMPORTS
 
 // Feed kurasi. `pythId` = Pyth price-feed id (32 byte hex) -> dipakai jadi oracle_feed on-chain
 // (feed = PublicKey dari byte-nya). Identitas oracle tiap pasar = feed Pyth ini.
-// `fallback` = harga awal pasar (USD). (Pyth public Hermes digembok API-key sejak 26 Agu 2026, jadi
-// demo nggak fetch harga live; mark digerakin lewat set_mark_price / tombol pump-crash.)
+// Harga awal pasar = harga Pyth TERAKHIR dari akun sponsored di cluster ini (devnet: XAU/SOL/BTC/ETH; localnet:
+// di-clone demo-local.sh). `fallback` (USD) cuma kepake kalau akunnya nggak ada (US500 di devnet, localnet offline)
+// — angkanya = harga Pyth devnet 22 Okt 2026 biar nggak jauh dari dunia nyata. (Hermes digembok API-key sejak
+// 26 Agu 2026 -> nggak ada keeper live; mark perp tanpa harga Pyth digerakin tombol pump/crash demo.)
 // Feed lintas kelas aset — metal (emas) + indeks saham + crypto — nunjukin "pasar leverage buat
 // ANGKA APA PUN": permissionless creation x feed non-crypto (yg launcher SPL nggak nyampe). id = Pyth ASLI.
 export const FEEDS = [
-  { symbol: 'XAU/USD', pythId: '765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2', fallback: 2650 },
+  { symbol: 'XAU/USD', pythId: '765d2ba906dbc32ca17cc11f5310a89e9ee1f6420508c63861f2f8ba4ee34bb2', fallback: 4122.82 },
+  // US500: no sponsored Pyth account on devnet -> fallback is an unverified reference level.
   { symbol: 'US500', pythId: 'e266cf0bf9a358bb19c4269f59b3d2e6258ecda5b0707e758f00c087f4baa3e9', fallback: 6000 },
-  { symbol: 'SOL/USD', pythId: 'ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d', fallback: 150 },
-  { symbol: 'BTC/USD', pythId: 'e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43', fallback: 95000 },
-  { symbol: 'ETH/USD', pythId: 'ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace', fallback: 3500 },
+  { symbol: 'SOL/USD', pythId: 'ef0d8b6fda2ceba41da15d4095d1da392a0d2f8ed0c6c7bc0f4cfac8c280b56d', fallback: 105.82 },
+  { symbol: 'BTC/USD', pythId: 'e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43', fallback: 82425.42 },
+  { symbol: 'ETH/USD', pythId: 'ff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace', fallback: 2434.72 },
 ]
 
 export function feedPubkey(pythId: string): PublicKey {
@@ -52,8 +55,11 @@ export function decodePythPrice(data: Uint8Array): { price6: number; publishTime
   return { price6: Math.round(price * 10 ** (expo + 6)), publishTime }
 }
 
-export function marketPda(feed: PublicKey): PublicKey {
-  return PublicKey.findProgramAddressSync([Buffer.from('market'), feed.toBuffer()], PROGRAM_ID)[0]
+// Slot pasar = ["market", feed, expiry_ts i64 LE]: perp = expiry 0 (satu per feed), prediction = satu per jatuh tempo.
+export function marketPda(feed: PublicKey, expiryTs = 0): PublicKey {
+  const e = Buffer.alloc(8)
+  e.writeBigInt64LE(BigInt(expiryTs))
+  return PublicKey.findProgramAddressSync([Buffer.from('market'), feed.toBuffer(), e], PROGRAM_ID)[0]
 }
 export function vaultPda(market: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from('vault'), market.toBuffer()], PROGRAM_ID)[0]
